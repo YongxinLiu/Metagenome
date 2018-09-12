@@ -1,11 +1,63 @@
 SHELL:=/bin/bash
 
-	# 16S扩增子分析流程第二版 16S Amplicon pipeline version 2
+	# 宏基因组分析流程第一版 
+	# Metagenome pipeline version 1
 
-	# 帮助文档
-	
-	# 流程所需的软件、脚本及数据库版本
+	# 帮助文档: 流程所需的软件、脚本及数据库版本
 	# Help: Pipeline dependency version of softwares, scripts and databases
+
+
+# 1. 标准流程 Standard pipeline
+
+	# 建立程序必须目录 
+	# Create work directory
+
+init:
+	touch $@
+	mkdir -p seq doc temp result script
+
+	# 准备输入文件和实验设计、参数数据库
+	# Prepare input seq and design
+
+## 1.1. 合并各样品文件
+	
+merge_sample:
+	# 合并单个样品
+	time zcat `find 2.remove_host/10/ -name *.gz | grep '\.1\.'` | gzip > seq/HnZH11R1_1.fq.gz # 44min
+	time zcat `find 2.remove_host/10/ -name *.gz | grep '\.2\.'` | pigz -p 8 > seq/HnZH11R1_2.fq.gz & # ~22p, 5m36s
+	# 按实验设计合并多个样品并改名，列2为列1；6个样，每个8线程，共48核
+    parallel --xapply -j 6 "zcat `find 2.remove_host/{2}/ -name *.gz | grep '\.1\.'` | pigz -p 8 > seq/{1}_1.fq.gz" ::: `tail -n+2 doc/design.txt | cut -f 1` ::: `tail -n+2 doc/design.txt | cut -f 2`
+	# find: ‘2.remove_host/{2}/’: No such file or directory 可能是引号里的反引中变量无法识别
+    # 改用循环先合并，20min，再改名
+    for i in `tail -n+2 doc/design.txt | cut -f 2`; do
+        zcat `find 2.remove_host/${i}/ -name *.gz | grep '\.1\.'` | pigz -p 8 > seq/${i}_1.fq.gz &
+        zcat `find 2.remove_host/${i}/ -name *.gz | grep '\.2\.'` | pigz -p 8 > seq/${i}_2.fq.gz & 
+    done 
+    awk 'BEGIN{OFS=FS="\t"}{system("mv seq/"$2"_1.fq.gz seq/"$1"_1.fq.gz ");system("mv seq/"$2"_2.fq.gz seq/"$1"_2.fq.gz ");}' \
+        <(tail -n+2 doc/design.txt)
+
+
+## 1.1. 质控并移除宿主
+	
+lane_split:
+	touch $@
+	# 质量原始数据 Quality control of lane files
+    db=/db/rice/IndJap
+	fastqc -t ${p} seq/*.gz &
+	# 8线程处理单任务列表 Single file 211M X PE100 = 42GB
+    time kneaddata -i seq/HnZH11R3_1.fq.gz -i seq/HnZH11R3_2.fq.gz \
+      -o temp/qc -v -t 8 --remove-intermediate-output \
+      --trimmomatic /conda2/share/trimmomatic-0.36-3/ --trimmomatic-options "SLIDINGWINDOW:4:20 MINLEN:50" \
+      --bowtie2-options "--very-sensitive --dovetail" -db $db
+	# 8线程处理单任务列表 parallel grep each index 2
+
+
+
+
+
+
+
+
 
 version: 
 	# 2018/4/27 2.0 Standard 16S anlysis report
@@ -32,11 +84,6 @@ version:
 # 1. 标准流程 Standard pipeline
 
 	# 建立程序必须目录 Create work directory
-
-init:
-	touch $@
-	mkdir -p seq doc temp result script
-
 
 ## 1.1. 拆分下机数据为文库
 	

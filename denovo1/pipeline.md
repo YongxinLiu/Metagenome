@@ -1,743 +1,583 @@
-SHELL:=/bin/bash
+#SHELL:=/bin/bash
 
 	# 宏基因组分析流程第一版 
 	# Metagenome pipeline version 1
 
+
+
+help:
 	# 帮助文档: 流程所需的软件、脚本及数据库版本
 	# Help: Pipeline dependency version of softwares, scripts and databases
+	
+	# 软件 Softwares
+	fastqc -v # 0.11.5 测序数据质量评估
+	multiqc --version # 1.4
+		multiqc -h # 质控合并
+	kneaddata --version # v0.6.1 质控和去宿主
+		kneaddata_read_count_table -h
+	parallel --version # 并行/多线程任务管理 20141022
+	humann2 --version # v0.11.1
+		humann2_join_tables
+		humann2_renorm_table
+		humann2_split_stratified_table
+	metaphlan2.py --version # 2.7.6 (5 March 2018)
+		merge_metaphlan_tables.py -h
+		metaphlan_hclust_heatmap.py -h
+	# microbiome_helper # 2017, https://github.com/mlangill/microbiome_helper
+		# metaphlan_to_stamp.pl
+	graphlan.py -h # 0.9.7 (21 July 2014)
+		export2graphlan.py
+		graphlan_annotate.py
+	run_lefse.py -h # 1.0
+		lefse-format_input.py
+		lefse-plot_cladogram.py
+		lefse-plot_res.py
+		lefse-plot_features.py
+	kraken2 --version # 2.0.7-beta
+	khmer # kmer质控软件
+		interleave-reads.py # 双端序列交叉合并为单文件
+		trim-low-abund.py # 低丰度kmer过滤
+		split-paired-reads.py # 双端单文件还原为双端和非配对
+	megahit -h # v1.1.3
+	quast.py # 5.0.0
+	salmon -v # 非比对基因定量软件 0.11.2
+	prokka --version # 基因组注释 1.13.3
+	cd-hit # 去冗余 
+		cd-hit-est # 核酸水平去冗余
+	diamond help # 类blast比对工具 v0.8.22.84
+	hmmsearch -h # 结构域界定 3.1b2
+		hmmbuild -h # hmm构建
+
+	fastp -v # version 0.12.5 fastq文件质控、质量类型转换
+	usearch10 --help # v10.0.240_i86linux64 扩增子分析软件
+	clustalo --version # 1.2.1 多序列对齐
+	biom --version # 2.1.5， OTU表格式转换
+
+	# 脚本 Scripts
+	#alpha_boxplot.sh -h # 1.0 基于usearch alpha_div绘制箱线图
+
+	# 数据库 Databases
+
+	# 更新日志 Update log
+	# 2018-09-12 Add kneaddata, humann2 for reference based pipeline
+	# 2018-09-23 Add kraken2 for taxonomy in reads levels, salmon genes quaitity
 
 
-# 1. 标准流程 Standard pipeline
 
-	# 建立程序必须目录 
-	# Create work directory
+# 1. 有参分析流程 Reference-based pipeline
+
 
 init:
+	# 清理零字节文件重启项目 Clean zero-byte files, restart project
+	find . -name "*" -type f -size 0c | xargs -n 1 rm -f
+	# 建立程序必须目录 Create basic directory
+	mkdir -p seq temp result
 	touch $@
-	mkdir -p seq doc temp result script
 
-	# 准备输入文件和实验设计、参数数据库
-	# Prepare input seq and design
-
-## 1.1. 合并各样品文件
-	
-merge_sample:
-	# 合并单个样品
-	time zcat `find 2.remove_host/10/ -name *.gz | grep '\.1\.'` | gzip > seq/HnZH11R1_1.fq.gz # 44min
-	time zcat `find 2.remove_host/10/ -name *.gz | grep '\.2\.'` | pigz -p 8 > seq/HnZH11R1_2.fq.gz & # ~22p, 5m36s
-	# 按实验设计合并多个样品并改名，列2为列1；6个样，每个8线程，共48核
-    parallel --xapply -j 6 "zcat `find 2.remove_host/{2}/ -name *.gz | grep '\.1\.'` | pigz -p 8 > seq/{1}_1.fq.gz" ::: `tail -n+2 doc/design.txt | cut -f 1` ::: `tail -n+2 doc/design.txt | cut -f 2`
-	# find: ‘2.remove_host/{2}/’: No such file or directory 可能是引号里的反引中变量无法识别
-    # 改用循环先合并，20min，再改名
-    for i in `tail -n+2 doc/design.txt | cut -f 2`; do
-        zcat `find 2.remove_host/${i}/ -name *.gz | grep '\.1\.'` | pigz -p 8 > seq/${i}_1.fq.gz &
-        zcat `find 2.remove_host/${i}/ -name *.gz | grep '\.2\.'` | pigz -p 8 > seq/${i}_2.fq.gz & 
-    done 
-    awk 'BEGIN{OFS=FS="\t"}{system("mv seq/"$2"_1.fq.gz seq/"$1"_1.fq.gz ");system("mv seq/"$2"_2.fq.gz seq/"$1"_2.fq.gz ");}' \
-        <(tail -n+2 doc/design.txt)
+	# 准备实验设计、测序数据和参数数据库
+	# Prepare experiment design (result/design.txt), sequecing data (seq/*.fq.gz) and database
 
 
-## 1.1. 质控并移除宿主
-	
-lane_split:
+## 1.1. 质控并移除宿主 Quality control & Remove host
+
+## 1.1.1 质量评估 Quality access
+
+qa: init
 	touch $@
-	# 质量原始数据 Quality control of lane files
-    db=/db/rice/IndJap
-	fastqc -t ${p} seq/*.gz &
-	# 8线程处理单任务列表 Single file 211M X PE100 = 42GB
-    time kneaddata -i seq/HnZH11R3_1.fq.gz -i seq/HnZH11R3_2.fq.gz \
-      -o temp/qc -v -t 8 --remove-intermediate-output \
-      --trimmomatic /conda2/share/trimmomatic-0.36-3/ --trimmomatic-options "SLIDINGWINDOW:4:20 MINLEN:50" \
-      --bowtie2-options "--very-sensitive --dovetail" -db $db
-	# 8线程处理单任务列表 parallel grep each index 2
+	# 质量评估 Quality access
+	time fastqc -t ${p} seq/*.gz &
+	# 质量报告汇总
+	multiqc -d seq/ -o result/
 
+## 1.1.2 质控并移除宿主 Quality control & Remove host
 
-
-
-
-
-
-
-
-version: 
-	# 2018/4/27 2.0 Standard 16S anlysis report
-	# 
-	# 软件 Softwares
-	# fastqc -v # 0.11.5 测序数据质量评估
-	# parallel # 并行/多线程任务管理
-	# fastp -v # version 0.12.5 fastq文件质控、质量类型转换
-	# usearch10 --help # v10.0.240_i86linux64 扩增子分析软件
-	# clustalo --version # 1.2.1 多序列对齐
-	# filter_alignment.py # from qiime1.9.1 筛选比对序列及区域
-	# make_phylogeny.py # from qiime1.9.1 默认调用fastree建树
-	# biom --version # 2.1.5， OTU表格式转换
-	# 
-	# 脚本 Scripts
-	# alpha_boxplot.sh # 1.0 基于usearch alpha_div绘制箱线图
-	#
-	# 数据库 Databases
-	# greengene13_5 # reference, and/or taxonomy database 
-	# rdp train set 16 # taxonomy database
-	# silva132 # chimera reference, and/or taxonomy database 
-
-
-# 1. 标准流程 Standard pipeline
-
-	# 建立程序必须目录 Create work directory
-
-## 1.1. 拆分下机数据为文库
-	
-	# Split lane into library
-	# 需要将lane文件放入seq目录，对应的index和文库放在doc/library.txt
-	# 注意：makefile中注释行的#顶格则不输出，如果缩进则输出
-	# 参考Illumina index列表见doc/IlluminaIndex.fa，我们常用的为反向互补序列(revseq命令)为IlluminaIndexRC.fa
-
-lane_split:
+qc: init
 	touch $@
-	# 质量原始数据 Quality control of lane files
-	fastqc -t ${p} seq/${lane}_* &
-	# 并行处理任务列表 parallel grep each index
-	# parallel并行任务，--xapply参数平行而非相乘组合，-j进程数；zcat解压，grep -A匹配barocde，-v删除--行，输出lane名
-	parallel --xapply -j ${p} "zcat seq/lane_1.fq.gz | grep -A 3 '#{1}'| grep -v -P '^--$$' > seq/{2}_1.fq" \
-		::: `tail -n+2 doc/library.txt | cut -f 2` ::: `tail -n+2 doc/library.txt | cut -f 1`
-	parallel --xapply -j ${p} "zcat seq/lane_2.fq.gz | grep -A 3 '#{1}'| grep -v -P '^--$$' > seq/{2}_2.fq" \
-		::: `tail -n+2 doc/library.txt | cut -f 2` ::: `tail -n+2 doc/library.txt | cut -f 1`
-	# 统计每个文库序列数量
-	echo -e "libraryID\treads" > ${lib_log}
-	for l in `tail -n+2 doc/library.txt | cut -f 1 | tr '\n' ' '`; do \
-	echo -ne "$${l}\t" >> ${lib_log}; wc -l seq/$${l}_1.fq | awk '{print $$1/4}' >> ${lib_log}; done
-	cat ${lib_log}
+	# 并行质控去宿主 kneaddata call trimmomatic quality control and bowtie2 remove host
+	time parallel --xapply -j ${j} \
+		"kneaddata -i seq/{1}_1.fq.gz -i seq/{1}_2.fq.gz \
+		-o temp/11qc -v -t ${p} --remove-intermediate-output \
+		--trimmomatic ${trimmomatic_path} --trimmomatic-options 'SLIDINGWINDOW:4:20 MINLEN:50' \
+		--bowtie2-options '--very-sensitive --dovetail' -db ${host_bt2}" \
+		::: `tail -n+2 result/design.txt | cut -f 1`
+	kneaddata_read_count_table --input temp/11qc --output result/11kneaddata_stat.txt
+	cat result/11kneaddata_stat.txt
 
-## 1.2 拆分文库为样品 Split library into sample
 
-	# makefile中使用for循环，调用的列表要在同一行用空格分隔，换行分隔会报错；代码也要在同一行用分号断句，不可用回车，但可用\换行
-	# 默认只拆分单左端barcode类型的样品:先匹配左端，再提取序列ID，再提取右端，最后改名，注意实验设计要严格规范无空格
+## 1.2. 物种和功能组成定量 humann2
 
-library_split:
+### 1.2.1 humann2输入文件准备：双端文件cat连接
+
+humann2_concat: qc
 	touch $@
-	# 文库按barcode拆分样品，保存至seq/sample目录中
-	# s/^@//;去掉序列名标记；s/1$$/2/;修改/1端编号格式；s/ 1/ 2/; 修改 1端编号格式
-	mkdir -p seq/sample
-	for l in `tail -n+2 doc/library.txt | cut -f 1 | tr '\n' ' '`; do \
-	echo $${l}; \
-	parallel --xapply -j ${p} "grep -A 2 -B 1 -P "^{1}" seq/$${l}_1.fq | grep -v -P '^--$$' \
-		> seq/sample/{2}_1.fq" ::: `tail -n+2 doc/$${l}.txt | cut -f 2` ::: `tail -n+2 doc/$${l}.txt | cut -f 1`; \
-	parallel -j ${p} "awk 'NR%4==1' seq/sample/{1}_1.fq | sed 's/^@//;s/1$$/2/;s/ 1/ 2/' \
-		> temp/id.{1}" ::: `tail -n+2 doc/$${l}.txt | cut -f 1`; \
-	parallel -j ${p} "usearch10 -fastx_getseqs seq/$${l}_2.fq -labels temp/id.{1} \
-		-fastqout seq/sample/{1}_2.fq" ::: `tail -n+2 doc/$${l}.txt | cut -f 1`; \
-	done
+	# 生成humann2输入要求的合并文件 cat pair-end for humann2
+	mkdir -p temp/12concat
+	parallel --xapply -j ${j} \
+		"cat temp/11qc/{1}*data_paired* > temp/12concat/{1}.fq" \
+		::: `tail -n+2 result/design.txt | cut -f 1`
+	# 查看样品数量和大小 show samples size
+	ls -l temp/12concat/*.fq
 
-library_split_stat: library_split
+### 1.2.2 humann2计算，包括metaphlan2
+
+humann2: humann2_concat
 	touch $@
-	rm -fr result/split
-	mkdir -p result/split
-	# 统计每个文库中样品测序数量
-	# plot_bar_library.sh添加-A可修改组名列、-l可设置图片中显示正确的库编号
-	for l in `tail -n+2 doc/library.txt | cut -f 1 | tr '\n' ' '|sed 's/$$ //'`; do echo $${l}; \
-	for s in `tail -n+2 doc/$${l}.txt | cut -f 1 | tr '\n' ' '`; do \
-	echo -ne "$${s}\t" >> result/split/$${l}.txt; wc -l seq/sample/$${s}_1.fq | awk '{print $$1/4}' >>  result/split/$${l}.txt; done; \
-	plot_bar_library.sh -i result/split/$${l}.txt -d doc/design.txt -o result/split/$${l} -A ${g1} -l $${l};\
-	done
-	cat result/split/L*.txt > ${sample_split}
-	# 实验设计样本数
-	wc -l doc/design.txt
-	# 显示总样品数
-	ls seq/sample/* | wc -l
+	mkdir -p temp/12humann2
+	time parallel -j ${j} \
+		'humann2 --input {}  \
+		--output temp/12humann2/ ' \
+		::: temp/12concat/*.fq 
 
+### 1.2.3 功能组成整理 humann2_sum
 
-## 1.3 双端序列合并 Merge pair-end reads
-
-sample_merge:
+humann2_sum: humann2
 	touch $@
-	# 双端序列合并
-	mkdir -p seq/merge
-	parallel -j ${p} "usearch10 -fastq_mergepairs seq/sample/{1}_1.fq -reverse seq/sample/{1}_2.fq \
-		-fastqout seq/merge/{1}.fq -relabel {1}. -threads 1" ::: `tail -n+2 doc/design.txt | cut -f 1`
-	# 合并所有双端合并的样品
-	cat seq/merge/* > seq/all.fq
+	mkdir -p result/12humann2
+	# 合并所有样品，通路包括各功能和具体的物种组成，还有基因家族(太多)，通路覆盖度层面可以进分析
+	humann2_join_tables --input temp/12humann2/ --file_name pathabundance --output result/12humann2/uniref.tsv
+	sed -i 's/_Abundance//g' result/12humann2/uniref.tsv
+	# 标准化为相对丰度relab或百万分数cpm
+	humann2_renorm_table --input result/12humann2/uniref.tsv --units relab \
+		--output result/12humann2/uniref_relab.tsv
+	# 分层结果，结果stratified(每个菌的功能组成)和unstratified(功能组成)两个
+	humann2_split_stratified_table --input result/12humann2/uniref_relab.tsv \
+		--output result/12humann2/
+	sed -i 's/# Pathway/MetaCyc_pathway/' result/12humann2/uniref_relab_*stratified.tsv
 
-sample_merge_stat: sample_merge
+
+## 1.3. 整理物种组成表和基本绘图 Summary metaphlan2 and plot
+
+### 1.3.1 整理物种组成表 Summary metaphlan2
+
+metaphaln2_sum: humann2_sum
 	touch $@
-	# 统计每个样品merge前后reads
-	rm -f ${sample_merge}
-	touch ${sample_merge}
-	for s in `tail -n+2 doc/design.txt | cut -f 1 | tr '\n' ' '`; do \
-	echo -ne "$${s}\t" >> ${sample_merge}; wc -l seq/merge/$${s}.fq | awk '{print $$1/4}' >> ${sample_merge}; done
+	# metaphlan2功能组成
+	mkdir -p result/13metaphlan2
+	# 合并单样品为表
+	merge_metaphlan_tables.py temp/12humann2/*_humann2_temp/*_metaphlan_bugs_list.tsv | \
+		sed 's/_metaphlan_bugs_list//g' > result/13metaphlan2/taxonomy.tsv
+	# 转换为stamp的多级格式，株水不完整，不去掉列无法对齐
+	metaphlan_to_stamp.pl result/13metaphlan2/taxonomy.tsv | grep -v 't__' > result/13metaphlan2/taxonomy.spf
+	# 绘制热图
+	metaphlan_hclust_heatmap.py --in result/13metaphlan2/taxonomy.tsv \
+		--out result/13metaphlan2/taxonomy_heatmap_top.pdf \
+		-c bbcry --top ${tax_top} --minv 0.1 -s log 
 
+### 1.3.2 GraPhlAn图
 
-## 1.4 切除引物 Cut primers and quality filter
-# Cut barcode 10bp + V5 19bp in left and V7 18bp in right
-fq_trim: sample_merge_stat
+metaphaln2_graphlan: metaphaln2_sum
 	touch $@
-	usearch10 -fastx_truncate seq/all.fq \
-		-stripleft ${stripleft} -stripright ${stripright} \
-		-fastqout temp/stripped.fq 
+	# metaphlan2 to graphlan
+	export2graphlan.py --skip_rows 1,2 -i result/13metaphlan2/taxonomy.tsv \
+		--tree temp/13ref_taxonomy.tree --annotation temp/13ref_taxonomy.annot \
+		--most_abundant 100 --abundance_threshold 1 --least_biomarkers 10 \
+		--annotations 5,6 --external_annotations 7 --min_clade_size 1
+	# graphlan annotation
+	graphlan_annotate.py --annot temp/13ref_taxonomy.annot temp/13ref_taxonomy.tree temp/13ref_taxonomy.xml
+	# output PDF figure, annoat and legend
+	graphlan.py temp/13ref_taxonomy.xml result/13metaphlan2/taxonomy_graphlan.pdf --external_legends --dpi 300 
 
-## **1.5 质量控制fastq filter**
-# 默认过滤错误率超1%的序列 Keep reads error rates less than 1%
-fq_qc: fq_trim
+### 1.3.3 物种组成LEfSe差异分析
+
+metaphaln2_lefse: metaphaln2_graphlan
 	touch $@
-	usearch10 -fastq_filter temp/stripped.fq \
-		-fastq_maxee_rate ${fastq_maxee_rate} \
-		-fastaout temp/filtered.fa -threads ${p}
+	mkdir -p result/13metaphlan2_lefse
+	# LEfSe差异分析和Cladogram
+	# 修改样本品为组名，要求重复为结尾数值
+	sed '1 s/[0-9]$$//g' result/13metaphlan2/taxonomy.tsv | grep -v '#' > result/13metaphlan2_lefse/lefse.txt
+	# 格式转换为lefse内部格式
+	lefse-format_input.py  result/13metaphlan2_lefse/lefse.txt temp/13lefse_input.in -c 1 -o 1000000
+	# 运行lefse
+	run_lefse.py temp/13lefse_input.in temp/13lefse_input.res
+	# 绘制物种树注释差异
+	lefse-plot_cladogram.py temp/13lefse_input.res result/13metaphlan2_lefse/lefse_cladogram.pdf --format pdf --dpi 600 
+	# 绘制所有差异features柱状图
+	lefse-plot_res.py temp/13lefse_input.res result/13metaphlan2_lefse/lefse_res.pdf --format pdf --dpi 600
+	# 批量绘制所有差异features柱状图
+	lefse-plot_features.py -f diff --archive none --format pdf \
+		temp/13lefse_input.in temp/13lefse_input.res result/13metaphlan2_lefse/t_
 
 
+## 1.4. kraken2物种组成(可选)
 
-## 1.6 序列去冗余 Remove redundancy
-# miniuniqusize为8，去除低丰度，增加计算速度
-fa_unqiue: 
+### 1.4.1 基于NCBI完整基因组数据库的k-mer物种注释 Taxonomy assign by k-mer and based on NCBI database
+
+kraken2_reads: qc
 	touch $@
-	usearch10 -fastx_uniques temp/filtered.fa \
-		-minuniquesize ${minuniquesize} -sizeout \
-		-fastaout temp/uniques.fa -threads ${p}
-	echo -ne 'Unique reads\t' > ${otu_log}
-	grep -c '>' temp/uniques.fa >> ${otu_log}
-	cat ${otu_log}
+	mkdir -p temp/14kraken2_reads
+	time parallel -j ${j} \
+		'kraken2 --db ${kraken2_db} --paired temp/11qc/{1}_1_kneaddata_paired*.fastq \
+		--threads ${p} --use-names --use-mpa-style --report-zero-counts \
+		--report temp/14kraken2_reads/{1}_report \
+		--output temp/14kraken2_reads/{1}_output' \
+		::: `tail -n+2 result/design.txt | cut -f 1`
 
+### 1.4.2 合并为矩阵 merge into matrix
 
-## 1.7 挑选OTU Pick OTUs
-
-	# 可选97% cluster_otus，或100% unoise3，默认unoise3，不支持多线程
-	# ifeq条件必须顶格，否则报错
-
-otu_pick: fa_unqiue
+kraken2_reads_sum: kraken2_reads
 	touch $@
-	echo -e "OTU method\t${otu_method}" >> ${otu_log}
-ifeq (${otu_method}, unoise3)
-	# 类似100%聚类，只去除嵌合体和扩增及错误，保留所有高丰度序列
-	usearch10 -unoise3 temp/uniques.fa -zotus temp/Zotus.fa -minsize ${minuniquesize} -threads ${p}
-else ifeq (${otu_method}, cluster_otus)
-	# cluster_otus无法修改聚类参数，想使用不同聚类相似度，使用cluster_smallmem命令
-	usearch10 -cluster_otus temp/uniques.fa -otus temp/Zotus.fa
+	mkdir -p result/14kraken2_reads
+	parallel -j ${j} \
+		'cut -f 2 temp/14kraken2_reads/{1}_report | sed "1 s/^/{1}\n/" > temp/14kraken2_reads/{1}_count ' \
+		::: `tail -n+2 result/design.txt | cut -f 1`
+	cut -f 1 temp/14kraken2_reads/${kraken2_header}_report | sed "1 s/^/Taxonomy\n/" > temp//14kraken2_reads/0header_count
+	paste temp/14kraken2_reads/*count > result/14kraken2_reads/taxonomy_count.txt
+
+
+
+# 2. 无参分析流程 De novo assemble pipeline
+
+## 2.1. khmer质控(可选)
+
+khmer: qc
+	touch $@
+	mkdir -p temp/21khmer
+	# -V is metagenome, not single genome. -M set max memory for save server. -f force write
+	time parallel -j ${j} \
+		'interleave-reads.py temp/11qc/{1}_1_kneaddata_paired_1.fastq temp/11qc/{1}_1_kneaddata_paired_2.fastq | \
+		trim-low-abund.py -V -M ${khmer_memory} -Z ${khmer_high} -C ${khmer_low} - -o temp/21khmer/{1}.fq; \
+		split-paired-reads.py -f -0 temp/21khmer/{1}_0.fq -1 temp/21khmer/{1}_1.fq -2 temp/21khmer/{1}_2.fq temp/21khmer/{1}.fq' \
+		::: `tail -n+2 result/design.txt | cut -f 1`
+
+## 2.2. Assemble 组装
+
+### 2.2.1 基于khmer质控后序列拼接(可选)
+
+megahit_all_k: khmer
+	touch $@
+	# 采用metahit拼接所有样本
+	rm -rf temp/22megahit_all_k
+	time megahit -t ${meta_threads} --k-min ${kmin} --k-max ${kmax} --k-step ${kstep} \
+	-1 `ls temp/21khmer/*_1.fq|tr '\n' ','|sed 's/,$$//'` \
+	-2 `ls temp/21khmer/*_1.fq|tr '\n' ','|sed 's/,$$//'` \
+	-o temp/22megahit_all_k
+
+### 2.2.2 基于qc质控后序列拼接
+
+megahit_all: khmer
+	touch $@
+	# 采用metahit拼接所有样本，理论上双端序列文件大小完全相关，为何有差异
+	rm -rf temp/22megahit_all
+	time megahit -t ${meta_threads} --k-min ${kmin} --k-max ${kmax} --k-step ${kstep} \
+	-1 `ls temp/11qc/*_paired_1.fastq|tr '\n' ','|sed 's/,$$//'` \
+	-2 `ls temp/11qc/*_paired_2.fastq|tr '\n' ','|sed 's/,$$//'` \
+	-o temp/22megahit_all
+
+## 2.2.3 megahit_all_quast评估
+
+megahit_all_quast_k: megahit_all_k
+	touch $@
+	# 拼接结果评估
+	mkdir -p result/22megahit_all
+	time quast.py -o temp/22megahit_all_k/ -m ${quast_len} -t ${p} temp/22megahit_all_k/final.contigs.fa
+	ln -f temp/22megahit_all_k/report.html result/22megahit_all/quast_report_k.html
+
+megahit_all_quast: megahit_all
+	touch $@
+	# 拼接结果评估
+	mkdir -p result/22megahit_all
+	time quast.py -o temp/22megahit_all/ -m ${quast_len} -t ${p} temp/22megahit_all/final.contigs.fa
+	ln -f temp/22megahit_all/report.html result/22megahit_all/quast_report.html
+
+### 2.2.4 Contig定量salmon
+
+megahit_all_salmon: megahit_all_quast
+	touch $@
+	mkdir -p temp/22salmon_contig
+	# 1. 建索引
+	# -t 转录本序列，--type 类型fmd/quasi，-k kmer长度默认31, -i 索引
+	salmon index -t temp/22megahit_all/final.contigs.fa -p ${p} \
+		-i temp/22salmon_contig/index --type quasi -k ${salmon_kmer}
+	# 2. 定量
+	parallel -j ${j} \
+		'salmon quant -i temp/22salmon_contig/index -l A -p ${p} --meta \
+		-1 temp/11qc/{1}_1_kneaddata_paired_1.fastq -2 temp/11qc/{1}_1_kneaddata_paired_2.fastq \
+		-o temp/22salmon_contig/{1}.quant' \
+		::: `tail -n+2 result/design.txt | cut -f 1`
+	# 3. 合并
+	salmon quantmerge --quants temp/22salmon_contig/*.quant -o result/22megahit_all/contig.TPM
+	salmon quantmerge --quants temp/22salmon_contig/*.quant --column NumReads -o result/22megahit_all/contig.count
+	sed -i '1 s/.quant//g' result/22megahit_all/contig.*
+
+### 2.2.5 Contig物种注释 kraken2
+
+kraken2_contig: megahit_all_salmon
+	touch $@
+	kraken2 --db ${kraken2_db} temp/22megahit_all/final.contigs.fa \
+	--threads ${p} --use-names \
+	--output result/22megahit_all/kraken2.tax
+	# report 为 contig.count的物种注释
+
+
+	# 单样品批量拼接
+	# ifseq, else, endif必须顶格写
+megahit_single: qc
+	touch $@
+	echo -e "Assemble method: ${assemble_method}\nAssemble mode: ${assemble_mode}\n"
+ifeq (${assemble_method}, megahit)
+	# 采用metahit单样品拼接
+	parallel --xapply -j ${j} \
+		"rm -r temp/22megahit/{1}; megahit -t ${p} \
+		-1 temp/11qc/{1}_1_kneaddata_paired_1.fastq \
+		-2 temp/11qc/{1}_1_kneaddata_paired_2.fastq \
+		-o temp/22megahit/{1}" \
+		::: `tail -n+2 result/design.txt | cut -f 1`
+else ifeq (${assemble_method}, metaspades)
+	# metaspades单样品拼接
+	parallel --xapply -j ${j} \
+		"metaspades.py -t ${p} -m 500 \
+		-1 temp/11qc/{1}_1_kneaddata_paired_1.fastq \
+		-2 temp/11qc/{1}_1_kneaddata_paired_2.fastq \
+		-o temp/22metaspades/{1}" \
+		::: `tail -n+2 result/design.txt | cut -f 1`
 else
 	# 其它：没有提供正确的方法名称，报错提示
-	$(error "Please select the right method: one of in unoise3 or cluster_otus") 
+	$(error "Please select the right method: one of in megahit or metaspades")
 endif
-	awk 'BEGIN {n=1}; />/ {print ">OTU_" n; n++} !/>/ {print}' temp/Zotus.fa > temp/otus.fa
-	echo -ne 'OTU number\t' >> ${otu_log}
-	grep -c '>' temp/otus.fa >> ${otu_log}
-	cat ${otu_log}
+	echo -ne 'Assemble finished!!!\n' 
 
 
-## 1.8 基于参考序列去嵌合 Remove chemira by silva
 
-	# 可选，推荐使用最新SILVA大数据库 https://www.arb-silva.de/
-	# 官方模式推荐sensitive错，推荐balanced, high_confidence
+## 2.3. Genome annotation 基因组注释
 
-chimera_ref: otu_pick
+### 2.3.1 对合并组装的单个contig文件基因注释
+
+prokka_all: kraken2_contig
 	touch $@
-	usearch10 -uchime2_ref temp/otus.fa \
-		-db ${chimera_ref} -strand plus -mode ${chimera_mode} \
-		-chimeras temp/otus_chimeras.fa -threads ${p}
-	# 获得非嵌合体序列ID
-	cat temp/otus.fa temp/otus_chimeras.fa| grep '>' | sort | uniq -u | sed 's/>//' > temp/no_chimeras.id
-	# 筛选非嵌合体
-	usearch10 -fastx_getseqs temp/otus.fa -labels temp/no_chimeras.id -fastaout temp/otus_no_chimeras.fa
-	echo -ne 'no chimeras\t' >> ${otu_log}
-	grep -c '>' temp/otus_no_chimeras.fa >> ${otu_log}
-	cat ${otu_log}
-
-
-## 1.9 去除宿主 remove host
-
-host_rm: chimera_ref
-	touch $@
-ifeq (${host_method}, blast)
-	# 方法1. 基于宿主基因组(含叶绿体/线粒体)比对
-	blastn -query temp/otus_no_chimeras.fa -db ${host} -out temp/otus_no_chimeras.blastn \
-	-outfmt '6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore qcovs' \
-	-num_alignments 1 -evalue 1 -num_threads ${p}
-	awk '$$3>${host_similarity} && $$13>${host_coverage}' temp/otus_no_chimeras.blastn | cut -f 1 | sort | uniq > temp/otus_host.id
-	cat <(grep '>' temp/otus_no_chimeras.fa|sed 's/>//') temp/otus_host.id | sort | uniq -u > temp/otus_no_host.id
-else ifeq (${host_method}, sintax_gg)
-	# 方法2. 基于GG13_5的usearch注释结果筛选，排除线粒体、叶绿体和非16S
-	usearch10 -sintax temp/otus_no_chimeras.fa \
-		-db ${usearch_gg} -sintax_cutoff ${sintax_cutoff} -strand both \
-		-tabbedout temp/otus_no_chimeras.tax -threads ${p}
-	grep -P -v 'mitochondria|Chloroplast|\t$$' temp/otus_no_chimeras.tax | cut -f 1 > temp/otus_no_host.id
-else ifeq (${host_method}, sintax_silva)
-	# 方法3. 基于silva132的usearch注释结果筛选，排除线粒体、叶绿体、真核和非16S
-	usearch10 -sintax temp/otus_no_chimeras.fa \
-		-db ${usearch_silva} -sintax_cutoff ${sintax_cutoff} -strand both \
-		-tabbedout temp/otus_no_chimeras.tax -threads ${p}
-	grep -P -v 'Mitochondria|Chloroplast|Eukaryota|\t$$' temp/otus_no_chimeras.tax | cut -f 1 > temp/otus_no_host.id
-else ifeq (${host_method}, sintax_silva_its)
-	# 方法4. 基于silva132的usearch注释ITS，排除线粒体、叶绿体、细菌16S
-	usearch10 -sintax temp/otus_no_chimeras.fa \
-		-db ${usearch_silva} -sintax_cutoff ${sintax_cutoff} -strand both \
-		-tabbedout temp/otus_no_chimeras.tax -threads ${p}
-	grep -P -v 'Mitochondria|Chloroplast|Bacteria|\t$$' temp/otus_no_chimeras.tax | cut -f 1 > temp/otus_no_host.id
-else ifeq (${host_method}, sintax_unite)
-	# 方法5. 基于blast和usearch注释结果筛选，排除宿主和非真菌
-	# blastn去除宿主
-	blastn -query temp/otus_no_chimeras.fa -db ${host} -out temp/otus_no_chimeras.blastn \
-	-outfmt '6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore qcovs' \
-	-num_alignments 1 -evalue 1 -num_threads ${p}
-	awk '$$3>${host_similarity} && $$13>${host_coverage}' temp/otus_no_chimeras.blastn | cut -f 1 | sort | uniq > temp/otus_host.id
-	# usearch使用unite注释ITS排除宿主和非真菌
-	usearch10 -sintax temp/otus_no_chimeras.fa \
-		-db ${usearch_unite} -sintax_cutoff ${sintax_cutoff} -strand both \
-		-tabbedout temp/otus_no_chimeras.tax -threads ${p}
-	grep -P -v 'Fungi|\t$$' temp/otus_no_chimeras.tax | cut -f 1 > temp/otus_no_fungi.id
-	cat <(grep '>' temp/otus_no_chimeras.fa|sed 's/>//') temp/otus_host.id temp/otus_no_fungi.id | sort | uniq -u > temp/otus_no_host.id
-else
-	# 其它：没有提供正确的方法名称，报错提示
-	$(error "Please select the right method: one of in blast, usearch_gg or usearch_silva") 
-endif
-	# 最终筛选结果复制入result
-	usearch10 -fastx_getseqs temp/otus_no_chimeras.fa -labels temp/otus_no_host.id -fastaout temp/otus_no_host.fa
-	echo -ne 'no host\t' >> ${otu_log}
-	grep -c '>' temp/otus_no_host.fa >> ${otu_log}
-	cat ${otu_log}
-	cp temp/otus_no_host.fa result/otu.fa
-
-
-## 1.10 生成OTU表 Creat OTUs table
-
-otutab_create: host_rm
-	touch $@
-ifeq (${map_method}, usearch10)
-	# 方法1：usearch10, temp/stripped.fq建议新流程使用，与旧体系只有filtered.fa兼容
-	usearch10 -otutab temp/filtered.fa -otus result/otu.fa -id ${map_identify} \
-		-otutabout temp/otutab.txt -threads ${p}
-else ifeq (${map_method}, vsearch)
-	# 方法2：vsearch，比usearch10更快
-	time vsearch --usearch_global temp/filtered.fa --db result/otu.fa --id ${map_identify} \
-		--otutabout temp/otutab.txt --threads ${p}
-else
-	# 其它：没有提供正确的方法名称，报错提示
-	$(error "Please select the right method: one of in usearch10 or vsearch") 
-endif
-
-
-## 1.11 OTU表筛选 Filter OTU table
-
-otutab_filter: otutab_create
-	touch $@
-	# 统计OTU表的基本信息
-	usearch10 -otutab_stats temp/otutab.txt -output temp/otutab.txt.stat
-	echo -ne "\nOTU table summary\nType\tThreshold\tReads\tSamples\tOTUs\nTotal\t-\t" > ${log_otutable}
-	head -n3 temp/otutab.txt.stat|awk '{print $$1}'|tr '\n' '\t'|sed 's/\t$$/\n/' >> ${log_otutable}
-	# 按样本测序量筛选：通常低于5000的样本会删除
-	usearch10 -otutab_trim temp/otutab.txt -min_sample_size ${min_sample_size} -output temp/otutab_trim1.txt
-	usearch10 -otutab_stats temp/otutab_trim1.txt -output temp/otutab_trim1.txt.stat
-	echo -ne "SampleSize\t${min_sample_size}\t" >> ${log_otutable}
-	head -n3 temp/otutab_trim1.txt.stat|awk '{print $$1}'|tr '\n' '\t'|sed 's/\t$$/\n/' >> ${log_otutable}
-	# 按OTU测序量筛选：通常低于8的OTU会删除
-	usearch10 -otutab_trim temp/otutab_trim1.txt -min_otu_size ${min_otu_size} -output temp/otutab_trim2.txt
-	usearch10 -otutab_stats temp/otutab_trim2.txt -output temp/otutab_trim2.txt.stat
-	echo -ne "OtuSize\t${min_otu_size}\t" >> ${log_otutable}
-	head -n3 temp/otutab_trim2.txt.stat|awk '{print $$1}'|tr '\n' '\t'|sed 's/\t$$/\n/' >> ${log_otutable}
-	# 按OTU相对丰度筛选：通常低于1 RPM 的OTU会删除
-	usearch10 -otutab_trim temp/otutab_trim2.txt -min_otu_freq ${min_otu_freq} -output temp/otutab_trim3.txt
-	usearch10 -otutab_stats temp/otutab_trim3.txt -output temp/otutab_trim3.txt.stat
-	echo -ne "OtuFreq\t${min_otu_freq}\t" >> ${log_otutable}
-	head -n3 temp/otutab_trim3.txt.stat|awk '{print $$1}'|tr '\n' '\t'|sed 's/\t$$/\n/' >> ${log_otutable}
-	# 复制最终版OTU表到结果目录
-	cp temp/otutab_trim3.txt result/otutab.txt
-	# 转换为biom格式
-	biom convert -i result/otutab.txt -o result/otutab.biom --table-type="OTU table" --to-json
-	# 统计OTU表
-	biom summarize-table -i result/otutab.biom > result/otutab.biom.sum
-	head -n 30 result/otutab.biom.sum
-
-## OTU表抽样标准化
-
-otutab_norm: otutab_filter
-	touch $@
-	# 依据最小样本量，设置OTU表标准化的阈值，如我们看到最小样品数据量为3.1万，可以抽样至3万
-	usearch10 -otutab_norm result/otutab.txt -sample_size ${sample_size} -output result/otutab_norm.txt 
-	usearch10 -otutab_stats result/otutab_norm.txt -output result/otutab_norm.txt.stat
-	echo -ne "OtuNorm\t${sample_size}\t" >> ${log_otutable}
-	head -n3 result/otutab_norm.txt.stat|awk '{print $$1}'|tr '\n' '\t'|sed 's/\t$$/\n/' >> ${log_otutable}
-	cat ${log_otutable}
-	# 转换为biom格式
-	biom convert -i result/otutab_norm.txt -o result/otutab_norm.biom --table-type="OTU table" --to-json
-
-
-## 1.12 物种注释 Assign taxonomy
-
-tax_assign: otutab_norm
-	touch $@
-	usearch10 -sintax result/otu.fa \
-		-db ${sintax_db} -sintax_cutoff ${sintax_cutoff} -strand both \
-		-tabbedout temp/otu.fa.tax -threads ${p}
-
-
-## 1.13 物种分类汇总 Taxonomy summary
-
-tax_sum: tax_assign
-	touch $@
-	mkdir -p result/tax
-	# 未分类的添加末注释标记，否则汇总时报错
-	sed -i 's/\t$$/\td:Unassigned/' temp/otu.fa.tax
-	# 按门、纲、目、科、属水平分类汇总
-	for i in p c o f g;do \
-		usearch10 -sintax_summary temp/otu.fa.tax -otutabin result/otutab_norm.txt -rank $${i} \
-			-output result/tax/sum_$${i}.txt; \
-	done
-	# 删除Taxonomy中异常字符如() " - /
-	sed -i 's/(//g;s/)//g;s/\"//g;s/\/Chloroplast//g;s/\-/_/g;s/\//_/' result/tax/sum_*.txt
-	# 格式化物种注释：去除sintax中置信值，只保留物种注释，替换:为_，删除引号
-	cut -f 1,4 temp/otu.fa.tax | sed 's/\td/\tk/;s/:/__/g;s/,/;/g;s/"//g;s/\/Chloroplast//' > result/taxonomy_2.txt
-	# 生成物种表格：注意OTU中会有末知为空白，补齐分类未知新物种为Unassigned
-	awk 'BEGIN{OFS=FS="\t"} {delete a; a["k"]="Unassigned";a["p"]="Unassigned";a["c"]="Unassigned";a["o"]="Unassigned";a["f"]="Unassigned";a["g"]="Unassigned";a["s"]="Unassigned"; split($$2,x,";");for(i in x){split(x[i],b,"__");a[b[1]]=b[2];} print $$1,a["k"],a["p"],a["c"],a["o"],a["f"],a["g"],a["s"];}' result/taxonomy_2.txt | sed '1 i #OTU ID\tKingdom\tPhylum\tClass\tOrder\tFamily\tGenus\tSpecies' > result/taxonomy_8.txt
-	# 去除#号和空格，会引起读取表格分列错误
-	sed -i 's/#//g;s/ //g' result/taxonomy_8.txt
-	# 添加物种注释
-	biom add-metadata -i result/otutab.biom --observation-metadata-fp result/taxonomy_2.txt -o result/otutab_tax.biom --sc-separated taxonomy --observation-header OTUID,taxonomy
-	# 添加物种注释
-	biom add-metadata -i result/otutab_norm.biom --observation-metadata-fp result/taxonomy_2.txt -o result/otutab_norm_tax.biom --sc-separated taxonomy --observation-header OTUID,taxonomy
-	# 制作门+变形菌纲混合比例文件
-	cat <(grep -v 'Proteobacteria' result/tax/sum_p.txt) <(grep 'proteobacteria' result/tax/sum_c.txt) > result/tax/sum_pc.txt
-
-
-# 1.14 多序列比对和进化树 Multiply alignment and make_phylogeny
-
-tree_make: tax_sum
-	touch $@
-	# Reference based alignment
-	#align_seqs.py -i result/otu.fa -t /mnt/bai/public/ref/gg_13_8_otus/rep_set_aligned/97_otus.fasta -o temp/aligned/
-	# clustalo+qiime1.9.1
-	clustalo -i result/otu.fa -o temp/otu_align.fa --seqtype=DNA --full --force --threads=${p}
-	#此步用于pynast去除非目标区域，不适合clustalo，可能是导致unifrac结果不好的原因
-	#filter_alignment.py -i temp/otu_align.fa  -o temp/
-	#make_phylogeny.py -i temp/otu_align_pfiltered.fasta -o result/otu.tree
-	make_phylogeny.py -i temp/otu_align.fa -o result/otu.tree
-
-# 1.15 Alpha多样性指数计算 Calculate alpha diversity index
-
-alpha_calc: tree_make
-	touch $@
-	mkdir -p result/alpha
-	# 计算14种alpha多样性指数
-	usearch10 -alpha_div result/otutab_norm.txt -output result/alpha/index.txt 
-	# 稀释曲线：取1%-100%的序列中OTUs数量 Rarefaction from 1%, 2% .. 100% in richness (observed OTUs)
-	# method fast / with_replacement / without_replacement ref: https://drive5.com/usearch/manual/cmd_otutab_subsample.html
-	usearch10 -alpha_div_rare result/otutab_norm.txt -output result/alpha/rare.txt -method ${rare_method}
-
-# 1.16 Beta多样性进化树和距离矩阵计算 Beta diversity tree and distance matrix
-
-beta_calc: alpha_calc
-	touch $@
-	# 计算距离矩阵，有多种方法结果有多个文件，需要目录
-	mkdir -p result/beta/
-	# 基于OTU构建进化树 Make OTU tree
-ifeq (${tree_method}, usearch10)
-	# usearch10 culster_agg建树+beta_div计算矩阵
-	usearch10 -cluster_agg result/otu.fa -treeout result/otu_usearch.tree
-	# ---Fatal error--- ../calcdistmxu.cpp(32) assert failed: QueryUniqueWordCount > 0 致信作者
-	# 生成5种距离矩阵：bray_curtis, euclidean, jaccard, manhatten, unifrac
-	usearch10 -beta_div result/otutab.txt -tree result/otu_usearch.tree -filename_prefix result/beta/
-	# ---Fatal error--- 1(91), expected ')', got '0.993' 它只依赖于cluster_agg的结果，fasttree结果不可用
-else ifeq (${tree_method}, qiime)
-	# clustalo + qiime1.9.1
-	# 转换txt为biom才可以用qiime分析
-	biom convert -i result/otutab_norm.txt -o result/otutab_norm.biom --table-type="OTU table" --to-json
-	# 计算4种距离矩阵 http://qiime.org/scripts/beta_diversity.html -s显示矩阵列表有34种距离可选
-	beta_diversity.py -i result/otutab_norm.biom -o result/beta/ -t result/otu.tree -m ${dis_method}
-	# 删除文件名中多余字符，以方法.txt为文件名
-	rename 's/_otutab_norm//' result/beta/*.txt
-else ifeq (${tree_method}, mafft)
-	# 方法3：mafft+fasttree
-else
-	# 其它：没有提供正确的方法名称，报错提示
-	$(error "Please select the right method: one of in usearch10 or qiime, mafft") 
-endif
-
-
-## 1.17 有参比对Greengenes用于picurst, bugbase分析
-
-otutab_gg: 
-	touch $@
-	# 根据方法选择usearch10/vsearch比对至gg13_5数据
-ifeq (${map_method}, usearch10)
-	usearch10 -otutab temp/filtered.fa -otus ${otutab_gg} -id ${map_identify} \
-		-otutabout result/otutab_gg.txt -threads ${p}
-else ifeq (${map_method}, vsearch)
-	time vsearch --usearch_global temp/filtered.fa --db ${otutab_gg} --id ${map_identify} \
-		--otutabout result/otutab_gg.txt --threads ${p}
-else
-	# 其它：没有提供正确的方法名称，报错提示
-	$(error "Please select the right method: one of in usearch10 or vsearch") 
-endif
-	# 统计OTU表
-	usearch10 -otutab_stats result/otutab_gg.txt -output result/otutab_gg.stat
-	cat result/otutab_gg.stat
-
-
-## 1.18 生成STAMP使用格式
-
-stamp_input: tax_sum
-	#touch $@
-	# Data does not form a strick hierarchy. Child Unassigned has multiple parents. 不允许在各级别有重名，可直接使用sum_tax的各级别给STAMP使用
-	#awk 'BEGIN{OFS=FS="\t"} NR==FNR {a[$$1]=$$0} NR>FNR {print a[$$1],$$0}' result/taxonomy_8.txt result/otutab_norm.txt | cut -f 2- | sed '1 s/#OTU ID/OTU/' | grep -v -P "Unassigned\tUnassigned" | grep -v '' > result/otutab_stamp.spf
-
-
-## 1.19 test按丰度过滤OTU表计算beta
-
-tree_make2: 
-	touch $@
-	# Reference based alignment
-	align_seqs.py -i result/otu.fa -t /mnt/bai/public/ref/gg_13_8_otus/rep_set_aligned/97_otus.fasta -o temp/aligned/
-	filter_alignment.py -i temp/aligned/otu_aligned.fasta -o temp/aligned/  # rep_seqs_align_pfiltered.fa, only very short conserved region saved
-	make_phylogeny.py -i temp/aligned/otu_aligned_pfiltered.fasta -o temp/otu.tree # generate tree by FastTree
-
-beta_calc2: tree_make2
-	touch $@
-	# OTU表筛选，根据具体组筛选
-	rm -rf temp/beta/
-	filter_otus_by_group_median.sh -i result/otutab_norm.txt \
-		-d ${Dc_design} -A ${Dc_group_name} -B ${Dc_group_list} -t ${abundance_thre} \
-		-o temp/otutab_norm.txt
-	biom convert -i temp/otutab_norm.txt -o temp/otutab_norm.biom --table-type="OTU table" --to-json
-	beta_diversity.py -i temp/otutab_norm.biom -o temp/beta/ -t temp/otu.tree -m bray_curtis,weighted_unifrac,unweighted_unifrac
-	rename 's/_otutab_norm//' temp/beta/*.txt
-
-beta_pcoa2: beta_calc2
-	touch $@
-	rm -f result/beta/*.p??
-	beta_pcoa.sh -i temp/beta/ -m ${bp_method} \
-		-d ${bp_design} -A ${bp_group_name} -B ${bp_group_list} -E ${bp_ellipse} \
-		-c ${bp_compare} \
-		-o ${bp_output} -h ${bp_height} -w ${bp_width}
-# 过滤后整体PCoA样式不变，但解析率增加
-
-# 2. 统计绘图 Statistics and plot
-
-	# 绘图所需Shell脚本位于script目录中script目录下，会按参数生成R脚本于工作目录中的script下
-
-plot_test:
-	echo ${g1_list}
-
-## 2.1 Alpha多样性指数箱线图 Alpha index in boxplot
-
-alpha_boxplot: 
-	touch $@
-	rm -f result/alpha/*.p??
-	alpha_boxplot.sh -i ${ab_input} -m ${ab_method} \
-		-d ${ab_design} -A ${ab_group_name} -B ${ab_group_list} \
-		-o ${ab_output} -h ${ab_height} -w ${ab_width}
-
-
-## 2.2 Alpha丰富度稀释曲线 Alpha rarefracation curve
-
-alpha_rare: alpha_boxplot
-	touch $@
-	alpha_rare.sh -i ${ar_input} \
-		-d ${ar_design} -A ${ar_group_name} -B ${ar_group_list} \
-		-o ${ar_output} -h ${ar_height} -w ${ar_width}
-
-
-## 2.3 beta_pcoa 主坐标轴分析距离矩阵 PCoA of distance matrix
-
-beta_pcoa: alpha_rare
-	touch $@
-	# 按组过滤OTUs再计算PCoA+CPCoA
-	rm -rf temp/beta/
-	filter_otus_by_group_median.sh -i result/otutab_norm.txt \
-		-d ${Dc_design} -A ${Dc_group_name} -B ${Dc_group_list} -t ${abundance_thre} \
-		-o temp/otutab_norm.txt
-	biom convert -i temp/otutab_norm.txt -o temp/otutab_norm.biom --table-type="OTU table" --to-json
-	beta_diversity.py -i temp/otutab_norm.biom -o temp/beta/ -t temp/otu.tree -m bray_curtis,weighted_unifrac,unweighted_unifrac
-	rename 's/_otutab_norm//' temp/beta/*.txt
-	rm -f result/beta/*.p??
-	beta_pcoa.sh -i ${bp_input} -m ${bp_method} \
-		-d ${bp_design} -A ${bp_group_name} -B ${bp_group_list} -E ${bp_ellipse} \
-		-c ${bp_compare} \
-		-o ${bp_output} -h ${bp_height} -w ${bp_width}
-
-
-## 2.4 beta_cpcoa 限制性主坐标轴分析: OTU表基于bray距离和CCA  CCA of bray distance matrix
-
-beta_cpcoa: beta_pcoa
-	touch $@
-	beta_cpcoa.sh -i ${bc_input} -m ${bc_method} \
-		-d ${bc_design} -A ${bc_group_name} -B ${bc_group_list} -E ${bc_ellipse} \
-		-o ${bc_output} -h ${bc_height} -w ${bc_width}
-
-
-## 2.5 tax_stackplot 样品和组分类学各级别的堆叠柱状图 Stackplot showing taxonomy in each level
-
-tax_stackplot: beta_cpcoa
-	touch $@
-	rm -f result/tax/*.p??
-	tax_stackplot.sh -i ${ts_input} -m ${ts_level} -n ${ts_number} \
-		-d ${ts_design} -A ${ts_group_name} -B ${ts_group_list} -O ${ts_order} \
-		-o ${ts_output} -h ${ts_height} -w ${ts_width}
-
-
-## 2.6 DA_compare 组间差异比较 edgeR or wilcox
-
-DA_compare: tax_stackplot
-	touch $@
-	rm -fr ${Dc_output}
-	mkdir -p ${Dc_output}
-	compare.sh -i ${Dc_input} -c ${Dc_compare} -m ${Dc_method} \
-		-p ${Dc_pvalue} -q ${Dc_FDR} -F ${Dc_FC} -t ${abundance_thre} \
-		-d ${Dc_design} -A ${Dc_group_name} -B ${Dc_group_list} \
-		-o ${Dc_output} -C ${Dc_group_name2}
-### 计算门纲目科属水平秩合检验差异，绘图维恩图，并对维恩图中各部分进行重叠
-DA_compare_tax: tax_stackplot
-	touch $@
-	for i in p pc c o f g;do \
-	rm -fr result/compare_$${i}; \
-	mkdir -p result/compare_$${i}; \
-	compare.sh -i result/tax/sum_$${i}.txt -c ${Dct_compare} -m ${Dct_method} \
-		-p ${Dct_pvalue} -q ${Dct_FDR} -F ${Dct_FC} -t ${Dct_thre} \
-		-d ${Dct_design} -A ${Dct_group_name} -B ${Dct_group_list} \
-		-o result/compare_$${i}/; \
-	batch_venn.pl -i ${doc}/venn.txt -d result/compare_$${i}/diff.list; \
-	batch2.pl -i result/compare_$${i}/diff.list.venn'*'.xls -d result/compare_$${i}/database.txt -o result/compare_$${i}/ -p vennNumAnno.pl; \
-	done
-
-
-# 2.7 plot_volcano (可选) 基于差异OTU表绘制火山图
-plot_volcano: DA_compare
-	touch $@
-	# 指定文件绘制单组差异
-	# plot_volcano.sh -i result/compare/ACT2KO-Col_all.txt -o result/compare/ACT2KO-Col
-	# awk调用比较列表批量绘制文件，grep -v删空行
-	awk 'BEGIN{OFS=FS="\t"}{system("plot_volcano.sh -i result/compare/"$$1"-"$$2"_all.txt -o result/compare/"$$1"-"$$2);}' \
-		<(grep -v '^$$' ${Dc_compare})
-
-
-# 2.8 差异OTU绘制热 图
-plot_heatmap: plot_volcano
-	touch $@
-	# 指定文件绘制单个图
-	# plot_heatmap.sh -i result/compare/V3703HnCp6-ZH11HnCp6_sig.txt -o result/compare/V3703HnCp6-ZH11HnCp6 -w 5 -h 7
-	# awk调用批量绘制文件，grep -v删空行
-	awk 'BEGIN{OFS=FS="\t"}{system("plot_heatmap.sh -i result/compare/"$$1"-"$$2"_sig.txt \
-		-o result/compare/"$$1"-"$$2" -w ${ph_width} -h ${ph_height}");}' \
-		<(grep -v '^$$' ${Dc_compare})
-
-plot_heatmap_tax: DA_compare_tax
-	touch $@
-	awk 'BEGIN{OFS=FS="\t"}{system("plot_heatmap.sh -i result/compare_${ph_tax}/"$$1"-"$$2"_sig.txt \
-		-o result/compare_${ph_tax}/"$$1"-"$$2" -w ${ph_width} -h ${ph_height}");}' \
-		<(grep -v '^$$' ${Dc_compare})
-
-
-# 2.9 差异OTU绘制曼哈顿图
-
-plot_manhattan: plot_heatmap
-	touch $@
-	#f输入文件，x为X轴，y为Y轴，g为简化和物种，s为上下调，p为丰度
-	#sp_manhattan2.sh -f result_k1-c/otu_INDvsTEJ -x otu -y PValue -g tax -s level -p A_mean
-	#sp_manhattan2.sh -f result/compare/HTEJ-HIND_all.txt -x HTEJ_HIND -y PValue -g Phylum -s level -p logCPM
-	# 陈同程序有待优化，先用我的脚本重画
-	#	awk 'BEGIN{OFS=FS="\t"}{system("sp_manhattan2.sh -f result/compare/"$$1"-"$$2"_all.txt \
-	#		-x "$$1"_"$$2" -y PValue -g Phylum -s level -p logCPM");}' \
-	#		<(grep -v '^$$' ${Dc_compare})
-	# plot_manhattan.sh -i result/compare/LTEJ-LIND_all.txt
-	awk 'BEGIN{OFS=FS="\t"}{system("plot_manhattan.sh -i result/compare/"$$1"-"$$2"_all.txt");}' \
-		<(grep -v '^$$' ${Dc_compare})
-
-
-# 2.10 单个差异OTU绘制箱线图
-
-plot_boxplot: 
-	touch $@
-	mkdir -p ${pb_output}
-	plot_boxplot_ggpubr.sh -i ${pb_input} -d ${pb_design} -A ${g1} -B ${bp_group_list} \
-		-m ${pb_list} -t ${pb_trans} -o ${pb_output} -n ${pb_norm}
-
-
-# 2.11 维恩图
-
-plot_venn: plot_manhattan
-	touch $@
-	# mkdir -p result/venn
-	# 绘制维恩图ABCDE，获得比较列表AB
-	batch_venn.pl -i ${venn} -d result/compare/diff.list
-	# 注释列表为OTU对应描述，目前添加培养注释
-	rm -f result/compare/*.xls.xls
-	batch2.pl -i 'result/compare/diff.list.venn*.xls' -d ${venn_anno} -o result/venn/ -p vennNumAnno.pl
-
-
-# 2.11 Upsetview图
-
-
-
-# 3. 高级分析 Advanced analysis
-
-## 3.1 lefse 多种差异物种特征分析
-
-## 3.2 picurst GG宏基因组预测
-picrust_calc: 
-	touch $@
-	mkdir -p picurst
-	biom convert -i result/otutab_gg.txt -o picurst/otutab.biom --table-type="OTU table" --to-json
-	biom summarize-table -i picurst/otutab.biom > picurst/otutab.stat
-	cat picurst/otutab.stat
-	# 校正拷贝数
-	normalize_by_copy_number.py -i picurst/otutab.biom -o picurst/otutab_norm.biom -c /db/picrust/16S_13_5_precalculated.tab.gz
-	# 预测宏基因组KO表
-	predict_metagenomes.py -i picurst/otutab_norm.biom -o picurst/ko.biom -c /db/picrust/ko_13_5_precalculated.tab.gz
-	predict_metagenomes.py -f -i picurst/otutab_norm.biom -o picurst/ko.txt  -c /db/picrust/ko_13_5_precalculated.tab.gz
-	# 按功能级别分类汇总, -c指输出类型，有KEGG_Pathways, COG_Category, RFAM三种，-l是级别，分4级，初始KO为4级，可全并为1-3级
-	categorize_by_function.py -f -i picurst/ko.biom -c KEGG_Pathways -l 3 -o picurst/ko3.txt
-	categorize_by_function.py -f -i picurst/ko.biom -c KEGG_Pathways -l 2 -o picurst/ko2.txt
-	categorize_by_function.py -f -i picurst/ko.biom -c KEGG_Pathways -l 1 -o picurst/ko1.txt
-
-## 3.3 faprotax 元素循环
-	
-	# 需要有物种注释的biom文件作为输入
-faprotax_calc:
-	touch $@
-	# 原始OTU表没有标准化，后期结果再标准化可能不合理。采用抽样标准化的OTU表
-	mkdir -p result/faprotax
-	/usr/bin/python2.7 /mnt/bai/yongxin/software/FAPROTAX_1.1/collapse_table.py -i result/otutab_norm_tax.biom -o result/faprotax/element_tab.txt -g /mnt/bai/yongxin/software/FAPROTAX_1.1/FAPROTAX.txt --collapse_by_metadata 'taxonomy' -v --force --out_report result/faprotax/report 
-
-	# 绘制指定marker的箱线图
-plot_fa_barplot: faprotax_calc
+	time prokka temp/22megahit_all/final.contigs.fa --outdir temp/23prokka_all \
+	-prefix mg --metagenome --force --cpus ${prokka_threads} \
+	--kingdom Archaea,Bacteria,Mitochondria,Viruses
+	mkdir -p temp/23NRgene
+	cp temp/23prokka_all/mg.ffn temp/23NRgene/mg.ffn
+
+### 2.3.2 对单样品组装的每个contig文件基因注释(大数据可选)
+
+	# ifseq, else, endif必须顶格写
+prokka_single: megahit_single
 #	touch $@
-	alpha_boxplot.sh -i result/faprotax/element_tab.txt -d ${Dc_design} -A ${Dc_group_name} -B ${Dc_group_list} \
-		-m ${fapro_list} -t TRUE -o result/faprotax/ -n FALSE
+	echo -e "Assemble method: ${assemble_method}\nAssemble mode: ${assemble_mode}\n"
+ifeq (${assemble_method}, megahit)
+	# 采用metahit单样品拼接
+	time parallel --xapply -j ${j} \
+		"prokka temp/22megahit/{1}/final.contigs.fa --outdir temp/23prokka/{1} \
+		-prefix mg --metagenome --force --cpus ${p} \
+		--kingdom Archaea,Mitochondria,Viruses" \
+		::: `tail -n+2 result/design.txt | cut -f 1`
+	# DNA level
+	cat 03temp/23prokka/*/mg.ffn > 03temp/24NRgene/mg.ffn
+else ifeq (${assemble_method}, metaspades)
+	# metaspades单样品拼接
+else
+	# 其它：没有提供正确的方法名称，报错提示
+	$(error "Please select the right method: one of in megahit or metaspades")
+endif
+	echo -ne 'Assemble finished!!!\n' 
+
+### 2.3.3 构建非冗余基集 Non-redundancy gene set(大数据可选)
+
+NRgeneSet: 
+	#	touch $@
+	grep -c '>' temp/23NRgene/mg.ffn
+	# -c  sequence identity threshold, default 0.9; -M  max available memory (Mbyte), default 400; -l  length of throw_away_sequences, default 10
+	/conda2/bin/cd-hit-est -i temp/23NRgene/mg.ffn -o temp/23NRgene/mg.ffn.nr -aS ${cdhit_coverage} -c ${cdhit_similarity} -G 0 -M ${cdhit_mem} -T ${p} -n 5 -d 0 -g 1
+	# 统计基因数据，确定ID是否非冗余
+	grep -c '>' temp/23NRgene/mg.ffn.nr
+#	# protein level
+#	cat temp/23prokka/*/mg.faa > temp/23NRgene/mg.faa
+#	grep -c '>' temp/23NRgene/mg.faa
+#	# aS覆盖度, c相似度, n字长，G本地，M内存，-d描述字长，r准确慢模式
+#	/conda2/bin/cd-hit -i temp/23NRgene/mg.faa -o temp/23NRgene/mg.faa.nr -aS 0.9 -c 0.95 -G 0 -M 900 -T ${p} -n 5 -d 0 -g 1 # 
+#	grep -c '>' temp/23NRgene/mg.faa.nr
+
+### 2.3.4 基因定量 salmon genes
+
+salmon_gene: prokka_all
+	touch $@
+	mkdir -p temp/23salmon_gene
+	# 1. 建索引
+	# -t 转录本序列，--type 类型fmd/quasi，-k kmer长度默认31, -i 索引
+	salmon index -t temp/23prokka_all/mg.ffn -p ${p} \
+		-i temp/23salmon_gene/index --type quasi -k ${salmon_kmer}
+	# 2. 定量
+	parallel -j ${j} \
+		'salmon quant -i temp/23salmon_gene/index -l A -p ${p} --meta \
+		-1 temp/11qc/{1}_1_kneaddata_paired_1.fastq -2 temp/11qc/{1}_1_kneaddata_paired_2.fastq \
+		-o temp/23salmon_gene/{1}.quant' \
+		::: `tail -n+2 result/design.txt | cut -f 1`
+	# 3. 合并
+	mkdir -p result/23salmon_gene
+	salmon quantmerge --quants temp/23salmon_gene/*.quant -o result/23salmon_gene/gene.TPM
+	salmon quantmerge --quants temp/23salmon_gene/*.quant --column NumReads -o result/23salmon_gene/gene.count
+	sed -i '1 s/.quant//g' result/23salmon_gene/gene.*
+
+### 2.3.5 基因物种注释 kraken2 annotate gene
+
+kraken2_gene: salmon_gene
+	touch $@
+	kraken2 --db ${kraken2_db} temp/23prokka_all/mg.ffn \
+	--threads ${p} --use-names \
+	--output result/23salmon_gene/kraken2.tax
 
 
-## 3.4 bugbase GG表型预测
+## 2.4 功能数据库注释
 
-## 3.5 tax4fun Silva宏基因组预测
+### 2.4.1 eggNOG
 
-## 3.6 humman2 宏基因组代谢通路分析
+eggnog: 
+	touch $@
+	mkdir -p temp/24eggnog
+	# 单行fasta容易分割 format faa into single line fasta; 21s
+	format_fasta_1line.pl -i temp/23prokka_all/mg.faa -o temp/24eggnog/input.faa 
+	# 按1M行分割  -l按行数分割，-a后缀宽度3位，默认2位；-d数据后缀; 2s
+	time split -l ${split_line} -a 3 -d temp/24eggnog/input.faa temp/24eggnog/input.chunk_
+	# 并行diamond比对, test 24m, 
+	time parallel --xapply -j ${j} \
+		'emapper.py -m diamond --no_annot --no_file_comments --data_dir ${eggnog_db} --cpu ${p} -i {1} -o {1}' \
+		::: temp/24eggnog/input.chunk*
+	# 合并比对结果 merge all blast result
+	cat temp/24eggnog/input.chunk_*.emapper.seed_orthologs > temp/24eggnog/input_file.emapper.seed_orthologs
+	# 注释 annotate blast result, test 14s, 200G 29m
+	time emapper.py --annotate_hits_table temp/24eggnog/input_file.emapper.seed_orthologs --no_file_comments \
+		-o temp/24eggnog/output_file --cpu ${p1} --data_dir ${eggnog_mem} --override
 
-## 3.7 network 网络分析
+eggnog_sum: eggnog
+	touch $@
+	mkdir -p result/24eggnog
+	# 添加表头 Add header
+	sed '1 i Name\teggNOG\tEvalue\tScore\tGeneName\tGO\tKO\tBiGG\tTax\tOG\tBestOG\tCOG\tAnnotation' temp/24eggnog/output_file.emapper.annotations > temp/24eggnog/output_file
+	# 重点1序列名，7KO，12COG分类，13注释
 
-## 3.8 vegan 环境因子分析
+	# 1. KO注释表
+	# 提取基因KO表，基因1对多个KO时只提取第一个KO
+	cut -f 1,7 temp/24eggnog/output_file|cut -f 1 -d ','|grep -v -P '\t$$' > temp/24eggnog/1ko.list #|less -S
+	wc -l temp/24eggnog/1ko.list # 3971基因有KO注释，只比KEGG_76的4288略低
+	# 基因丰度矩阵末尾添加对应KO编号，没注释的直接删除，可选注释为unclassified
+	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print $$0,a[$$1]}' temp/24eggnog/1ko.list result/23salmon_gene/gene.count | \
+		sed '/\t$$/d' > temp/24eggnog/gene_ko.count
+	# 检查注释前后基因数量
+	wc -l result/23salmon_gene/gene.count 
+#	wc -l temp/24eggnog/gene_ko.count
+	# 合并基因表为KO表，输出count值和tpm值
+	Rscript ~/github/Metagenome/denovo1/script/mat_gene2ko.R -i temp/24eggnog/gene_ko.count -o result/24eggnog/kotab -n ${unit}
+	# KO对应的描述
+	# awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print $$0,a[$$1]}' /db/kegg/ko_description.txt result/24eggnog/kotab.count > result/24eggnog/kotab.count.anno
+	# STAMP的spf格式，结果design.txt进行KO或Description差异比较
+	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print a[$$1],$$0}' /db/kegg/ko_description.txt result/24eggnog/kotab.count | sed 's/^\t/Undescription\t/' > result/24eggnog/kotab.count.spf
+
+	# 2. COG注释表
+	# 提取12列COG分类注释
+	cut -f 1,12 temp/24eggnog/output_file|cut -f 1 -d ','|grep -v -P '\t$$' > temp/24eggnog/1cog.list #|less -S
+	# 检查注释前后基因数量
+	wc -l result/23salmon_gene/gene.count 
+	wc -l temp/24eggnog/1cog.list # 5175基因有cog注释，远高于KEGG_76的4288
+	# 基因丰度矩阵末尾添加对应cog编号，没注释的直接删除，可选注释为unclassified
+	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print $$0,a[$$1]}' temp/24eggnog/1cog.list result/23salmon_gene/gene.count | \
+		sed '/\t$$/d' > temp/24eggnog/gene_cog.count
+	# 合并基因表为cog表，输出count值和tpm值
+	sed -i '1 s/\tCOG/\tKO/' temp/24eggnog/gene_cog.count
+	Rscript ~/github/Metagenome/denovo1/script/mat_gene2ko.R -i temp/24eggnog/gene_cog.count -o result/24eggnog/cogtab -n ${unit}
+	# cog对应的描述，STAMP的spf格式，结果design.txt进行cog或Description差异比较
+	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2"\t"$$3} NR>FNR{print a[$$1],$$0}' /mnt/zhou/yongxin/db/eggnog/COG_one_letter_code_descriptions.tsv result/24eggnog/cogtab.count | sed 's/^\t/Undescription\t/' > result/24eggnog/cogtab.count.spf
+	# 添加整理柱状图，和分组柱状图
+
+	# 3. 基因功能描述
+	# 提取基因anno分类表，基因1对多个anno时只提取第一个anno
+	cut -f 1,13 temp/24eggnog/output_file|cut -f 1 -d ','|grep -v -P '\t$$' > temp/24eggnog/3anno.list
+	wc -l temp/24eggnog/3anno.list # 5173基因有anno注释，远高于KEGG_76的4288
+	# anno对应的描述，STAMP的spf格式，没注释的基因删除，结果design.txt进行anno或Description差异比较
+	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print a[$$1],$$0}' temp/24eggnog/3anno.list result/23salmon_gene/gene.count | grep -v -P '^\t' > result/24eggnog/annotab.count.spf # sed 's/^\t/Undescription\t/'
+	#	# 添加COG分类
+	#	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print a[$$2],$$0}' temp/24eggnog/1cog.list result/24eggnog/annotab.count.spf > temp/24eggnog/cogannotab.count.spf # | sed 's/^\t/Undescription\t/'
+	#	sed -i '1 s/COG/ID/' temp/24eggnog/cogannotab.count.spf
+	#	# 添加COG对应的描述，STAMP的spf格式，结果design.txt进行cog或Description差异比较，非严格层级，stamp无法打开
+	#	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2"\t"$$3} NR>FNR{print a[$$1],$$0}' /mnt/zhou/yongxin/db/eggnog/COG_one_letter_code_descriptions.tsv temp/24eggnog/cogannotab.count.spf > result/24eggnog/cogannotab.count.spf # | sed 's/^\t/Undescription\t/'
 
 
-## 3.9 culture 培养菌
+### 2.4.2 KEGG
 
-	# 筛选每个OTUs在菌库中的相似度和覆盖度，挑选高丰度的绘制Graphlan图
-culture: 
-	mkdir -p result/39culture
-	# 比对OTU至可培养菌blast数据库
-	blastn -query result/otu.fa -db ${culture_db} -out temp/culture_otu.blastn -outfmt '6 qseqid sseqid pident qcovs length mismatch gapopen qstart qend sstart send evalue bitscore' -num_alignments 1 -evalue 1 -num_threads ${p}
-	# 添加blastn结果表头，最主要前4列：OTUID，培养菌ID，相似度，覆盖度
-	sed -i '1 i OTUID\tsseqid\tpident\tqcovs\tlength\tmismatch\tgapopen\tqstart\tqend\tsstart\tsend\tevalue\tbitscore' temp/culture_otu.blastn
-	# 统计可培养菌所占种类和丰度比例
-	echo -ne "Total OTUs\t" > result/39culture/summary.txt
-	grep '>' -c result/otu.fa >> result/39culture/summary.txt
-	echo -ne "Cultured OTUs\t" >> result/39culture/summary.txt
-	awk '$$3>=97 && $$4>=99' temp/culture_otu.blastn|wc -l >> result/39culture/summary.txt
-	# 计算平均丰度
-	otutab_mean.sh -i result/otutab.txt -o temp/otutab.mean
-	# 添加丰度至culture
-	awk 'BEGIN{OFS=FS="\t"} NR==FNR {a[$$1]=$$2} NR>FNR {print $$0,a[$$1]}' temp/otutab.mean temp/culture_otu.blastn | cut -f 1-4,14 > temp/temp
-	# 添加物种注释
-	awk 'BEGIN{OFS=FS="\t"} NR==FNR {a[$$1]=$$4} NR>FNR {print $$0,a[$$2]}' ${culture_db}.tax temp/temp | sed '1 s/$$/Taxonomy/' > result/39culture/otu.txt
-	echo -ne "Cultured abundance\t" >> result/39culture/summary.txt
-	awk '$$3>=97 && $$4>=99' result/39culture/otu.txt | awk '{a=a+$$5} END {print a}' >> result/39culture/summary.txt
-	cat result/39culture/summary.txt
+kegg: kraken2_gene
+	touch $@
+	mkdir -p temp/24kegg
+	# --outfmt 6, BLAST tabular;
+	diamond blastp --db ${kegg_dmnd} --query temp/23prokka_all/mg.faa \
+		--outfmt 6 --threads ${p} --max-target-seqs 1 --quiet \
+		--out temp/24kegg/gene_diamond.f6
+
+kegg_sum: kegg
+#	touch $@
+	mkdir -p result/24kegg
+	# 提取基因ID(Name)和KEGG基因ID(KgeneID)
+	cut -f 1,2 temp/24kegg/gene_diamond.f6 | uniq | sed '1 i Name\tKgeneID' > temp/24kegg/gene_kegg.list
+	# 追加KO编号(KO)和描述(Kdescription)
+	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2"\t"$$3} NR>FNR{print $$0,a[$$2]}' \
+		/db/kegg/kegg_gene_ko_description.txt temp/24kegg/gene_kegg.list > temp/24kegg/gene_ko.list
+	# 基因丰度矩阵末尾添加对应KO编号，没注释的直接删除，可选注释为unclassified
+	# awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$1]=$3} NR>FNR{print $0,a[$1]}' temp/24kegg/gene_ko.list result/23salmon_gene/gene.count | sed 's/\t$/\tunclassified/' > temp/24kegg/gene_ko.count
+	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$3} NR>FNR{print $$0,a[$$1]}' temp/24kegg/gene_ko.list result/23salmon_gene/gene.count | \
+		sed '/\t$$/d' > temp/24kegg/gene_ko.count
+	# 检查注释前后基因数量
+	wc -l temp/24kegg/gene_ko.count
+	wc -l result/23salmon_gene/gene.count 
+	# 合并基因表为KO表，输出count值和tpm值
+	Rscript ~/github/Metagenome/denovo1/script/mat_gene2ko.R -i temp/24kegg/gene_ko.count -o result/24kegg/kotab -n ${unit}
+	# KO对应的描述
+	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print $$0,a[$$1]}' /db/kegg/ko_description.txt result/24kegg/kotab.count > result/24kegg/kotab.count.anno
+ 
+
+### 2.4.3 CAZyome 碳水化合物数据库
+
+dbcan2: eggnog_sum
+	touch $@
+	mkdir -p temp/24dbcan2
+	diamond blastp --db ${dbcan2_dmnd} --query temp/23prokka_all/mg.faa \
+		--outfmt 6 --threads ${p} --max-target-seqs 1 --quiet \
+		--out temp/24dbcan2/gene_diamond.f6
+
+dbcan2_sum: dbcan2
+	mkdir -p result/24dbcan2
+	# 提取基因对应基因家族，同一基因存在1对多，只取第一个
+	cut -f 1,2 temp/24dbcan2/gene_diamond.f6 | uniq | sed 's/|/\t/g' | cut -f 1,3 | \
+		cut -f 1,2 -d '_' |sed '1 i Name\tKO' > temp/24dbcan2/gene_fam.list
+	# 基因丰度矩阵末尾添加对应FAM编号，没注释的直接删除
+	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print $$0,a[$$1]}' temp/24dbcan2/gene_fam.list result/23salmon_gene/gene.count | \
+		sed '/\t$$/d' > temp/24dbcan2/gene_fam.count
+	# 统计注释基因的比例
+	wc -l result/23salmon_gene/gene.count
+	wc -l temp/24dbcan2/gene_fam.count
+	# 按基因家族合并
+	Rscript ~/github/Metagenome/denovo1/script/mat_gene2ko.R -i temp/24dbcan2/gene_fam.count -o result/24dbcan2/cazytab
+	# 结果中添加FAM注释，spf格式用于stamp分析
+	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print a[$$1],$$0}' ${dbcan2_anno} \
+		result/24dbcan2/cazytab.count > result/24dbcan2/cazytab.count.spf
+
+
+### 2.4.4 ResFams 抗生素抗性数据库
+	
+	# kraken2_gene
+resfams: 
+	touch $@
+	mkdir -p temp/24resfams
+	diamond blastp --db ${resfams_dmnd} --query temp/23prokka_all/mg.faa \
+		--outfmt 6 --threads ${p} --max-target-seqs 1 --quiet \
+		--out temp/24resfams/gene_diamond.f6
+
+resfams_sum: resfams
+	touch $@
+	mkdir -p result/24resfams
+	# 提取基因对应基因家族
+	cut -f 1,2 temp/24resfams/gene_diamond.f6 | uniq |sed '1 i Name\tResGeneID' > temp/24resfams/gene_fam.list
+	# 基因丰度矩阵末尾添加对应FAM编号，没注释的直接删除
+	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print a[$$1],$$0}' temp/24resfams/gene_fam.list result/23salmon_gene/gene.count | \
+		sed '/^\t/d' > result/24resfams/resfam.count
+	# 统计注释基因的比例
+	wc -l result/23salmon_gene/gene.count
+	wc -l result/24resfams/resfam.count # 172/7734=2.2%
+	# 结果中添加FAM注释，spf格式用于stamp分析
+	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$4"\t"$$3"\t"$$2} NR>FNR{print a[$$1],$$0}' ${resfams_anno} \
+		result/24resfams/resfam.count > result/24resfams/resfam.count.spf
 
 
 
-# 4. 输出结果报告 Write Rmarkdown HTML report
+# 3. 宏基因组分箱 Binning
 
-rmd: tax_stackplot
-	report_16S.pl -g ${g1} -b ${version} -m ${compare_method} -d ${design} -c ${compare} -v ${venn} -a ${abundance_thre} -F ${FC} -p ${pvalue} -q ${FDR} # -D ${g2_list} -F ${g3_list} -l ${library} -S ${elite_report} -s ${summary}  -t ${tern}
-	ln -sf ${wd}/${version}/ /var/www/html/report/16Sv2/${version}
-	rm -f ${version}/${version}
+## 3.1 

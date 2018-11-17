@@ -64,11 +64,11 @@ awk 'BEGIN{OFS=FS="\t"}{system("mv seq/"$2"_1.fq.gz seq/"$1"_1.fq.gz ");system("
 
 ## 1.1. 质控并移除宿主 Quality control & Remove host
 
-make qc # 3h
+time make qc # 3h
 
 ### 1.1.2 质量评估(可选) 
 
-make qa # 1h
+time make qa # 1h
 
 
 ## 1.2. 物种和功能组成定量 humman2

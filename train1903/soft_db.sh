@@ -23,9 +23,8 @@ conda config --add channels ${site}/cloud/pytorch/
 
 
 # 数据库安装位置
-# 多人使用，我们统一安装至/db目录
-db=~/db
-mkdir -p $db
+# 多人使用，我们统一安装至/db目录，需要自己有权限的目录，如~/db
+db=/db
 
 ## 1.1 质控软件
 # 质量评估软件fastqc
@@ -37,12 +36,19 @@ conda install multiqc # v1.6
 conda install kneaddata # v0.7.0
 # 查看可用数据库，如宏基因组去宿主，宏转录组去核糖体
 kneaddata_database
-mkdir -p $db/kneaddata
+mkdir -p $db/host
 # 如下载人类基因组bowtie2索引，3.44G，推荐晚上过夜下载
-kneaddata_database --download human_genome bowtie2 $db/kneaddata/
+kneaddata_database --download human_genome bowtie2 $db/host/
 # 如宏转录组用SILVA核糖体数据库，3.61G
-kneaddata_database --download ribosomal_RNA bowtie2 $db/kneaddata/
+kneaddata_database --download ribosomal_RNA bowtie2 $db/host/
 
+# 建立拟南芥基因组索引为例 http://plants.ensembl.org/info/website/ftp/index.html
+mkdir -p $db/host/ath
+cd $db/host/ath
+wget -c ftp://ftp.ensemblgenomes.org/pub/release-41/plants/fasta/arabidopsis_thaliana/dna/Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
+gunzip Arabidopsis_thaliana.TAIR10.dna.toplevel.fa.gz
+mv Arabidopsis_thaliana.TAIR10.dna.toplevel.fa tair10.fa
+bowtie2-build --threads 9 tair10.fa bt2 # 28s
 
 ## 1.2 有参分析流程MetaPhlAn2、HUMAnN2
 

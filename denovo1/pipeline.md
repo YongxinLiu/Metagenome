@@ -85,7 +85,8 @@ init:
 qa: init
 	touch $@
 	# 质量评估 Quality access
-	time fastqc -t ${p} seq/*.gz &
+	time fastqc -t ${p1} seq/*1.fq.gz
+	time fastqc -t ${p1} seq/*2.fq.gz
 	# 质量报告汇总
 	multiqc -d seq/ -o result/
 
@@ -93,6 +94,7 @@ qa: init
 
 qc: init
 	touch $@
+	mkdir -p temp/11qc
 	# 并行质控去宿主 kneaddata call trimmomatic quality control and bowtie2 remove host
 	time parallel --xapply -j ${j} \
 		"kneaddata -i seq/{1}_1.fq.gz -i seq/{1}_2.fq.gz \

@@ -9,10 +9,10 @@ SHELL:=/bin/bash
 	## 工作目录 Working directory
 	# 修改wd为当前工作目录pwd
 	wd=`pwd`
-	# 设置任务最大运行任务/线程数，超过CPU数量效率反而会降低
-	j=6
-	p=9
-	p1=24
+	# 设置j最大运行任务/p线程数/p1非并行任务线程数，超过CPU数量效率反而会降低
+	j=8
+	p=12
+	p1=48
 	# make init # 建立分析所需子目录
 	
 	# 准备实验设计(10doc/design.txt)和测序数据(02seq/*.fq)和数据库(修改如下参数)
@@ -21,9 +21,9 @@ SHELL:=/bin/bash
 ## 1.1. qc 质控和去宿主
 	
 	# 质控软件trimmomatic安装目录
-	trimmomatic_path=/conda2/share/trimmomatic-0.36-3/
-	# 宿主基因组bowtie2索引
-	host_bt2=/db/rice/IndJap
+	trimmomatic_path=/conda/share/trimmomatic-0.38-1/
+	# 宿主基因组bowtie2索引，如人humann, 拟南芥ath
+	host_bt2=/db/host/ath/bt2
 
 
 ## 1.2. 物种和功能组成定量 humman2
@@ -126,4 +126,4 @@ SHELL:=/bin/bash
 
 
 
-include ~/github/Metagenome/denovo1/pipeline.md
+include /home/meta/soft/Metagenome/denovo1/pipeline.md

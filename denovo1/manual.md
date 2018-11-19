@@ -6,76 +6,48 @@
 	# 0. 准备工作 Preparation
 
 	# 设置工作目录 Set work directory
-	wd=data/meta/nrt1.1b
+	wd=ath/3T
 	cd ~/$wd
 	
 	# 准备流程 Prepare makefile
-	ln -s ~/github/Metagenome/denovo1/parameter.md ~/$wd/makefile
-	ln -s ~/github/Metagenome/denovo1/manual.md ~/$wd/manual.sh
+	ln -s /home/meta/soft/Metagenome/denovo1/parameter.md makefile
+	ln -s /home/meta/soft/Metagenome/denovo1/manual.md ./
 	
 	# 建立初始工作目录 Create initial working directory
 	make init
 
-	# 准备实验设计 Experiment design
-	cp ~/test/meta1809/result/design.txt result/ 
+	# 准备实验设计上传到result目录，至少有两列样本名和组名 Experiment design
+	# 复制实验设计模板
+	cp /home/meta/soft/Metagenome/denovo1/result/design.txt result/ 
+
 	# 准备原始数据 sequencing raw data
-	# 测序数据6个样品，实验和对照各3个，数据量109-236M，PE100, 21.8-47.2G，共198.8GB
-	## 样有多个文件，合并各样品文件
-	
-	# 10min
-merge_sample:
-	# 合并单个样品, 20GB 10min;
-	# time zcat `find 2.remove_host/10/ -name *.gz | grep '\.1\.'` | gzip > seq/HnZH11R1_1.fq.gz # 44min
-	# time zcat `find 2.remove_host/10/ -name *.gz | grep '\.2\.'` | pigz -p 8 > seq/HnZH11R1_2.fq.gz & # ~22p, 5m36s
-	# 按实验设计旧文件夹批量合并再改名
-for i in `tail -n+2 result/design.txt | cut -f 2`; do
-zcat `find 2.remove_host/${i}/ -name *.gz | grep '\.1\.'` | pigz -p 8 > seq/${i}_1.fq.gz &
-zcat `find 2.remove_host/${i}/ -name *.gz | grep '\.2\.'` | pigz -p 8 > seq/${i}_2.fq.gz &
-done
-awk 'BEGIN{OFS=FS="\t"}{system("mv seq/"$2"_1.fq.gz seq/"$1"_1.fq.gz ");system("mv seq/"$2"_2.fq.gz seq/"$1"_2.fq.gz ");}' <(tail -n+2 result/design.txt)
+	# 水稻测试数据6个样品，实验和对照各3个，数据量109-236M，PE100, 21.8-47.2G，共198.8GB
+	# 拟南芥测试数据36个样本，4个实验组，共850GB数据
+	# 样有多个文件，合并各样品文件
+	# merge_sample ~ 5h, 合并单个样品, 20GB 10min;
+	cd /mnt/m2/data/meta/ath/3T/
+	# 按实验设计按文件夹批量合并再改名，需要输入文件每个样本一个目录
+	p=3
+  for i in `tail -n+2 design.txt|cut -f3`; do
+    zcat `find 01.filter/${i}/ -name *.gz | grep '_1.fq'` | pigz -p ${p} > seq/${i}_1.fq.gz &
+    zcat `find 01.filter/${i}/ -name *.gz | grep '_2.fq'` | pigz -p ${p} > seq/${i}_2.fq.gz &
+  done
+  awk 'BEGIN{OFS=FS="\t"}{system("mv seq/"$3"_1.fq.gz seq/"$1"_1.fq.gz ");system("mv seq/"$3"_2.fq.gz seq/"$1"_2.fq.gz ");}' <(tail -n+2 design.txt)
 
 
-	# 准备宿主基因组 Host genome
-	# 下载建索引，以水稻籼粳混合为例，平时只有单个基因组(涉及多物种需多个基因组)
-	# 设置基因组目录，改为自己有权限的目录，我设置的位置方便大家使用 Set genome download directory
-	db=/db/rice
-	mkdir -p $db && cd $db
-	# Ensembl plant: http://plants.ensembl.org/info/website/ftp/index.html
-	# Download Oryza indica 
-	wget -c ftp://ftp.ensemblgenomes.org/pub/release-40/plants/fasta/oryza_indica/dna/Oryza_indica.ASM465v1.dna.toplevel.fa.gz
-	# Download Oryza sativa (japonica)
-	wget -c ftp://ftp.ensemblgenomes.org/pub/release-40/plants/fasta/oryza_sativa/dna/Oryza_sativa.IRGSP-1.0.dna.toplevel.fa.gz
-	gunzip *.gz
-	rename 's/dna.toplevel.//;s/Oryza_//' *.fa
-	# combine indica and japonica
-	cat <(sed 's/>/>IND/' indica.ASM465v1.fa) <(sed 's/>/>JAP/' sativa.IRGSP-1.0.fa) > IndJap.fa
-	# bowtie2 index 2.2.6
-	bowtie2-build --version
-	time bowtie2-build IndJap.fa IndJap
-	# 37m55s
+## 1.1. 质控并移除宿主(~2d) Quality control & Remove host
 
-	# 文件提取100万行测试
-	mkdir -p 02seq/bak
-	mv 02seq/*.gz 02seq/bak
-	for i in `tail -n+2 01doc/design.txt|cut -f 1`; do
-		zcat 02seq/bak/${i}_1.fq.gz | head -n 1000000 | gzip > 02seq/${i}_1.fq.gz
-		zcat 02seq/bak/${i}_2.fq.gz | head -n 1000000 | gzip > 02seq/${i}_2.fq.gz
-	done
-
-## 1.1. 质控并移除宿主 Quality control & Remove host
-
-time make qc # 3h
+time make qc
 
 ### 1.1.2 质量评估(可选) 
 
-time make qa # 1h
-
+time make qa
 
 ## 1.2. 物种和功能组成定量 humman2
 
 ## 1.2.1 humman2输入文件准备：双端文件cat连接
 
-make humman2_concat # 3m
+make humann2_concat
 
 ## 1.2.2 humman2计算，包括metaphlan2
 

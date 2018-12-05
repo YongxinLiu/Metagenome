@@ -46,7 +46,14 @@
   # 测试流程是否可用
   humann2_test
   # 数据库布置见附录：HUMAnN2
+  
+  # metaphlan2输助脚本
+  conda install graphlan
+  conda install export2graphlan
+  # ImportError: libgfortran.so.1错误解决办法
+  conda install libgfortran==1
 
+  
   # 物种注释
   # 基于LCA算法的物种注释kraken2  https://ccb.jhu.edu/software/kraken/
   conda install kraken2 # 2.0.7_beta
@@ -54,6 +61,15 @@
   kraken2-build --standard --threads 24 --db $db/kraken2
   # 此步下载数据>50GB，下载时间由网速决定，索引时间4小时33分，多线程最快35min完成
   # 标准模式下只下载5种数据库：古菌archaea、细菌bacteria、人类human、载体UniVec_Core、病毒viral
+
+  # 建Git安装，没有可以在网站上手动下载压缩包，再解压
+  # LangilleLab输助脚本 https://github.com/LangilleLab/microbiome_helper
+  git clone git@github.com:LangilleLab/microbiome_helper.git
+  # 我写的输助脚本 https://github.com/YongxinLiu/Metagenome
+  git git@github.com:YongxinLiu/Metagenome.git
+  # 添加环境变量，否则需要使用脚本所在的完整路径
+  # 添加目录至环境变量，注释修改位置
+  echo "export PATH=`pwd`/microbiome_helper:`pwd`/Metagenome/denovo1/script/:\$PATH" >> ~/.bashrc
 
 
 ## 基因组拼接、注释和定量
@@ -340,8 +356,18 @@ mkdir -p $db/protein
 ### lefse
 
   conda install lefse
+  # ImportError: libgfortran.so.3
+  conda install libgfortran==3
+  # ImportError: libicuuc.so.54
+  conda install ICU==54 # UnsatisfiableError
+  scp -r yongxin@192.168.0.110:/mnt/bai/yongxin/bin/miniconda3/pkgs/icu-54.1-0/ /conda/pkgs/ # 程序找不到
+  # 设置lib的三种方法
+  sys.path
+  sys.path.append("/conda/pkgs/icu-54.1-0/")
+  sys.path
+  # 添加 ~/.bashrc PYTHONPATH=$PYTHONPATH:/conda/pkgs/icu-54.1-0
 
-
+  
 ### picrust预测KO
   
   conda install picrust

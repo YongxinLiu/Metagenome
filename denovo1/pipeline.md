@@ -102,8 +102,21 @@ qc: init
 		--trimmomatic ${trimmomatic_path} --trimmomatic-options 'SLIDINGWINDOW:4:20 MINLEN:50' \
 		--bowtie2-options '--very-sensitive --dovetail' -db ${host_bt2}" \
 		::: `tail -n+2 result/design.txt | cut -f 1`
-	kneaddata_read_count_table --input temp/11qc --output result/11kneaddata_stat.txt
+	kneaddata_read_count_table --input temp/11qc --output temp/11kneaddata_stat.txt
+	cut -f 1,2,4,12 temp/11kneaddata_stat.txt | awk 'BEGIN{OFS=FS="\t"} {print $$0,$$3/$$2*100,$$4/$$3*100}' | sed 's/_1_kneaddata//' | sed '1 s/-nan/Hi-Q%/;s/-nan/rm_host%/' > result/11kneaddata_stat.txt
 	cat result/11kneaddata_stat.txt
+
+## 1.13 提交数据准备 Submit clean data
+
+submit: qc
+	touch $@
+	mkdir -p seq/clean
+	# hard link to clean
+	ln temp/11qc/*data_paired* seq/clean/
+	# rename accroding to ID
+	rename 's/_1_kneaddata_paired//;s/fastq/fq/' seq/clean/*
+	# compress for reducing space
+	pigz seq/clean/*
 
 
 ## 1.2. 物种和功能组成定量 humann2
@@ -126,7 +139,7 @@ humann2: humann2_concat
 	touch $@
 	mkdir -p temp/12humann2
 	time parallel -j ${j} \
-		'humann2 --input {}  \
+		'humann2 --input {} --threads ${p} \
 		--output temp/12humann2/ ' \
 		::: temp/12concat/*.fq 
 
@@ -222,7 +235,7 @@ kraken2_reads_sum: kraken2_reads
 	parallel -j ${j} \
 		'cut -f 2 temp/14kraken2_reads/{1}_report | sed "1 s/^/{1}\n/" > temp/14kraken2_reads/{1}_count ' \
 		::: `tail -n+2 result/design.txt | cut -f 1`
-	cut -f 1 temp/14kraken2_reads/${kraken2_header}_report | sed "1 s/^/Taxonomy\n/" > temp//14kraken2_reads/0header_count
+	cut -f 1 temp/14kraken2_reads/${kraken2_header}_report | sed "1 s/^/Taxonomy\n/" > temp/14kraken2_reads/0header_count
 	paste temp/14kraken2_reads/*count > result/14kraken2_reads/taxonomy_count.txt
 
 

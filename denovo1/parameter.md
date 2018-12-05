@@ -22,8 +22,8 @@ SHELL:=/bin/bash
 	
 	# 质控软件trimmomatic安装目录
 	trimmomatic_path=/conda/share/trimmomatic-0.38-1/
-	# 宿主基因组bowtie2索引，如人humann, 拟南芥ath
-	host_bt2=/db/host/ath/bt2
+	# 宿主基因组bowtie2索引，如人humann, 拟南芥ath/rice
+	host_bt2=/db/host/rice/bt2
 
 
 ## 1.2. 物种和功能组成定量 humman2
@@ -36,8 +36,8 @@ SHELL:=/bin/bash
 
 ## 1.4 kraken2
 	
-	kraken2_db=/mnt/zhou/yongxin/db/kraken2
-	kraken2_header=`tail -n 1 result/design.txt | cut -f 1`
+	kraken2_db=/db/kraken2
+	kraken2_header=`tail -n+2 result/design.txt | cut -f 1|head -n1`
 
 
 

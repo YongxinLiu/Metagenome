@@ -81,7 +81,8 @@ init:
 ## 1.1. 质控并移除宿主 Quality control & Remove host
 
 ## 1.1.1 质量评估 Quality access
-
+	
+	# 此步选做，一般原始序列合并时已经统计过数据量
 qa: init
 	touch $@
 	# 质量评估 Quality access
@@ -108,15 +109,22 @@ qc: init
 
 ## 1.13 提交数据准备 Submit clean data
 
-submit: qc
+	# 保存质控和去宿主后数据至seq/clean目录，连同保存宿主比例
+gsa: qc
 	touch $@
-	mkdir -p seq/clean
+	mkdir -p submit
 	# hard link to clean
-	ln temp/11qc/*data_paired* seq/clean/
+	ln temp/11qc/*data_paired* submit/
 	# rename accroding to ID
-	rename 's/_1_kneaddata_paired//;s/fastq/fq/' seq/clean/*
+	rename 's/_1_kneaddata_paired//;s/fastq/fq/' submit/*
 	# compress for reducing space
-	pigz seq/clean/*
+	pigz submit/*
+	ln result/11kneaddata_stat.txt submit/stat.txt
+	ln result/design.txt submit/metadata.txt
+	md5sum *_1.fq.gz > md5sum1.txt
+	md5sum *_2.fq.gz > md5sum2.txt
+	paste md5sum1.txt md5sum2.txt | awk '{print $2"\t"$1"\t"$4"\t"$3}' > md5sum.txt
+	cat md5sum.txt
 
 
 ## 1.2. 物种和功能组成定量 humann2

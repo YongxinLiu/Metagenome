@@ -6,8 +6,8 @@
 	# 0. 准备工作 Preparation
 
 	# 设置工作目录 Set work directory
-	# ath/3T rice/miniCore
-	wd=rice/miniCore
+	# ath/3T ath/2.5T rice/miniCore
+	wd=ath/2.5T
 	cd ~/$wd
 	
 	# 准备流程 Prepare makefile
@@ -21,6 +21,7 @@
 	# 复制实验设计模板
 	cp /home/meta/soft/Metagenome/denovo1/result/design.txt result/ 
 	# 或从数据来源处复制实验设计
+	cp /mnt/m2/data/meta/ath/2.5T/metadata.txt result/design.txt
 	cp /mnt/m2/data/meta/rice/miniCore/metadata.txt result/design.txt
 
 	# 准备原始数据 sequencing raw data
@@ -56,7 +57,7 @@ time make qc
 	# 筛选末完成样本
 	cat temp/qc.finished <(tail -n+2 result/design.txt) | cut -f 1 | sort | uniq -u > temp/qc.unfinished
 	# 手动运行末完成样本
-time parallel --xapply -j 6 \
+time parallel --xapply -j 8 \
         "kneaddata -i seq/{1}_1.fq.gz -i seq/{1}_2.fq.gz \
         -o temp/11qc -v -t 12 --remove-intermediate-output \
         --trimmomatic /conda/share/trimmomatic-0.38-1/ --trimmomatic-options 'SLIDINGWINDOW:4:20 MINLEN:50' \

@@ -25,7 +25,7 @@ rm(list = ls())
 # 1.2 安装CRAN来源常用包
 site="https://mirrors.tuna.tsinghua.edu.cn/CRAN"
 # 依赖包列表：参数解析、数据变换、绘图和开发包安装、安装依赖、ggplot主题
-package_list = c("optparse", "reshape2","ggplot2","devtools","dplyr","qqman") # 
+package_list = c("optparse", "qqman") # "reshape2","ggplot2","devtools","dplyr",
 # 判断R包加载是否成功来决定是否安装后再加载
 for(p in package_list){
   if(!suppressWarnings(suppressMessages(require(p, character.only = TRUE, quietly = TRUE, warn.conflicts = FALSE)))){
@@ -39,7 +39,7 @@ for(p in package_list){
 # 解析参数-h显示帮助信息
 if (TRUE){
   option_list <- list(
-    make_option(c("-i", "--input"), type="character", default="tassel/alpha_richness.txt",
+    make_option(c("-i", "--input"), type="character", default="tassel/alpha_richness.sig",
                 help="Input table file to read; Gemma结果pvalu文件 [default %default]"),
     make_option(c("-t", "--type"), type="numeric", default="4",
                 help="column of pvalue; P值所在列 [default %default]"),

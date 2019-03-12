@@ -23,6 +23,8 @@
 	# 或从数据来源处复制实验设计
 	cp /mnt/m2/data/meta/ath/2.5T/metadata.txt result/design.txt
 	cp /mnt/m2/data/meta/rice/miniCore/metadata.txt result/design.txt
+	# 或从样本名中提取
+	ls seq/*.1.fq.gz|cut -f 2 -d '/'|cut -f 1 -d '.'|awk '{print $1"\t"$1}'|sed '1 i SampleID\tGroupID' > result/design.txt
 
 	# 准备原始数据 sequencing raw data
 	# 水稻测试数据6个样品，实验和对照各3个，数据量109-236M，PE100, 21.8-47.2G，共198.8GB
@@ -84,8 +86,8 @@ make humann2_concat
 
 ## 1.2.2 humman2计算，包括metaphlan2
 
-make humman2 # 2.5d
-
+make humman2
+  # 2.5d
   # real    5568m46.620s
   # user    292860m16.788s
   # sys     44782m37.254s

@@ -121,11 +121,11 @@ gsa: qc
 	pigz submit/*
 	ln result/11kneaddata_stat.txt submit/stat.txt
 	ln result/design.txt submit/metadata.txt
-	md5sum *_1.fq.gz > md5sum1.txt
-	md5sum *_2.fq.gz > md5sum2.txt
-	paste md5sum1.txt md5sum2.txt | awk '{print $2"\t"$1"\t"$4"\t"$3}' > md5sum.txt
-	cat md5sum.txt
-
+	md5sum submit/*_1.fq.gz > submit/md5sum1.txt
+	md5sum submit/*_2.fq.gz > submit/md5sum2.txt
+	paste submit/md5sum1.txt submit/md5sum2.txt | awk '{print $2"\t"$1"\t"$4"\t"$3}' > submit/md5sum.txt
+	sed -i 's/submit\///g' submit/md5sum.txt
+	cat submit/md5sum.txt
 
 ## 1.2. 物种和功能组成定量 humann2
 

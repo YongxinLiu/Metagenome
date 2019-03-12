@@ -202,6 +202,17 @@ usearch提供gg13.5, rdpv16和silva123序列和物种注释文件
 	time bowtie2-build --threads 9 ebi41.fa bt2
 	# 1p 37m55s, 9p 7m55s
 
+### 小麦基因组
+
+	#http://plants.ensembl.org/info/website/ftp/index.html
+	mkdir -p $db/host/wheat
+	cd $db/host/wheat
+	wget -c ftp://ftp.ensemblgenomes.org/pub/plants/release-41/fasta/triticum_aestivum/dna/Triticum_aestivum.IWGSC.dna.toplevel.fa.gz
+	gunzip Triticum_aestivum.IWGSC.dna.toplevel.fa.gz
+	mv Triticum_aestivum.IWGSC.dna.toplevel.fa tae.fa
+	bowtie2-build --threads 9 tae.fa bt2 # 1h41m
+	
+
 
 ## HUMAnN2有参流程
 

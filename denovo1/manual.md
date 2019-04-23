@@ -6,8 +6,8 @@
 	# 0. 准备工作 Preparation
 
 	# 设置工作目录 Set work directory
-	# ath/3T ath/2.5T rice/miniCore
-	wd=ath/2.5T
+	# ath/2.5T ath/3T rice/miniCore rice/miniCore2 
+	wd=rice/miniCore2
 	cd ~/$wd
 	
 	# 准备流程 Prepare makefile
@@ -17,66 +17,33 @@
 	# 建立初始工作目录 Create initial working directory
 	make init
 
+	# 准备原始数据 sequencing raw data (多样本合并和统计见附录1)
+	# 链接数据至工作目录
+  ln -s /mnt/m2/data/meta/$wd/seq/*.gz seq/
+
 	# 准备实验设计上传到result目录，至少有两列样本名和组名 Experiment design
 	# 复制实验设计模板
 	cp /home/meta/soft/Metagenome/denovo1/result/design.txt result/ 
 	# 或从数据来源处复制实验设计
 	cp /mnt/m2/data/meta/ath/2.5T/metadata.txt result/design.txt
 	cp /mnt/m2/data/meta/rice/miniCore/metadata.txt result/design.txt
+	cp /mnt/m2/data/meta/rice/miniCore2/metadata.txt result/design.txt
 	# 或从样本名中提取
 	ls seq/*.1.fq.gz|cut -f 2 -d '/'|cut -f 1 -d '.'|awk '{print $1"\t"$1}'|sed '1 i SampleID\tGroupID' > result/design.txt
 
-	# 准备原始数据 sequencing raw data
-	# 水稻测试数据6个样品，实验和对照各3个，数据量109-236M，PE100, 21.8-47.2G，共198.8GB
-	# 拟南芥测试数据36个样本，4个实验组，共850GB数据
-	# 样有多个文件，合并各样品文件
-	# merge_sample ~ 5h, 合并单个样品, 20GB 10min;
-	cd /mnt/m2/data/meta/ath/3T/
-	# 按实验设计按文件夹批量合并再改名，需要输入文件每个样本一个目录
-	p=3
-	for i in `tail -n+2 design.txt|cut -f3`; do
-		zcat `find 01.filter/${i}/ -name *.gz | grep '_1.fq'` | pigz -p ${p} > seq/${i}_1.fq.gz &
-		zcat `find 01.filter/${i}/ -name *.gz | grep '_2.fq'` | pigz -p ${p} > seq/${i}_2.fq.gz &
-	done
-	awk 'BEGIN{OFS=FS="\t"}{system("mv seq/"$3"_1.fq.gz seq/"$1"_1.fq.gz ");system("mv seq/"$3"_2.fq.gz seq/"$1"_2.fq.gz ");}' <(tail -n+2 design.txt)
-	# 统计样本md5值
-	cd seq
-	md5sum *_1.fq.gz > md5sum.txt
-	md5sum *_2.fq.gz >> md5sum.txt
-	cat md5sum.txt
-
-	# 链接数据至工作目录
-	ln -s /mnt/m2/data/meta/$wd/seq/*.gz seq/
-
-
 ## 1.1. 质控并移除宿主(~2d) Quality control & Remove host
 
-time make qc
+  time make qc
+  # 时间较长，如异常中断的处理，见附录2. KneadData中断的手动继续
 
-	# qc中kneaddata多任务中断后仅重跑不完整样本的手动处理
-	# 检查log中报告完成的样本，并提取样本名
-	grep 'Final output files created' temp/11qc/*.log|cut -f 3 -d '/'|cut -f 1 -d '_' > temp/qc.finished
-	# 筛选末完成样本
-	cat temp/qc.finished <(tail -n+2 result/design.txt) | cut -f 1 | sort | uniq -u > temp/qc.unfinished
-	# 手动运行末完成样本
-time parallel --xapply -j 8 \
-        "kneaddata -i seq/{1}_1.fq.gz -i seq/{1}_2.fq.gz \
-        -o temp/11qc -v -t 12 --remove-intermediate-output \
-        --trimmomatic /conda/share/trimmomatic-0.38-1/ --trimmomatic-options 'SLIDINGWINDOW:4:20 MINLEN:50' \
-        --bowtie2-options '--very-sensitive --dovetail' -db /db/host/rice/bt2" \
-        ::: `cat temp/qc.unfinished`
-kneaddata_read_count_table --input temp/11qc --output temp/11kneaddata_stat.txt
-cut -f 1,2,4,12 temp/11kneaddata_stat.txt | awk 'BEGIN{OFS=FS="\t"} {print $0,$3/$2*100,$4/$3*100}' | sed 's/_1_kneaddata//' | sed '1 s/-nan/Hi-Q%/;s/-nan/rm_host%/' > result/11kneaddata_stat.txt
-cat result/11kneaddata_stat.txt
+  ### 1.1.2 质量评估(可选) 
+  
+  time make qa
+  
+  ### 1.1.3 提取上传的Clean数据
+  
+  make submit
 
-
-### 1.1.2 质量评估(可选) 
-
-time make qa
-
-### 1.1.3 提取上传的Clean数据
-
-make submit
 
 ## 1.2. 物种和功能组成定量 humman2
 
@@ -1060,4 +1027,44 @@ sourmash compare sourmash/*sig -o sourmash/Hu_meta
 # 比较结果绘图
 sourmash plot --labels sourmash/Hu_meta
 # 树图和热图见当前文件夹，从K-mer角度为样本比较、筛选提供可能
+
+
+## 附录
+
+### 附录1. 宏基因组样本多文件合并和统计
+
+	# 水稻测试数据6个样品，实验和对照各3个，数据量109-236M，PE100, 21.8-47.2G，共198.8GB
+	# 拟南芥测试数据36个样本，4个实验组，共850GB数据
+	# 样有多个文件，合并各样品文件()
+	# merge_sample ~ 5h, 合并单个样品, 20GB 10min;
+	cd /mnt/m2/data/meta/ath/3T/
+	# 按实验设计按文件夹批量合并再改名，需要输入文件每个样本一个目录
+	p=3
+	for i in `tail -n+2 design.txt|cut -f3`; do
+		zcat `find 01.filter/${i}/ -name *.gz | grep '_1.fq'` | pigz -p ${p} > seq/${i}_1.fq.gz &
+		zcat `find 01.filter/${i}/ -name *.gz | grep '_2.fq'` | pigz -p ${p} > seq/${i}_2.fq.gz &
+	done
+	awk 'BEGIN{OFS=FS="\t"}{system("mv seq/"$3"_1.fq.gz seq/"$1"_1.fq.gz ");system("mv seq/"$3"_2.fq.gz seq/"$1"_2.fq.gz ");}' <(tail -n+2 design.txt)
+	# 统计样本md5值
+	cd seq
+	md5sum *_1.fq.gz > md5sum.txt
+	md5sum *_2.fq.gz >> md5sum.txt
+	cat md5sum.txt
+
+### 附录2. KneadData中断的手动继续
+	# qc中kneaddata多任务中断后仅重跑不完整样本的手动处理
+	# 检查log中报告完成的样本，并提取样本名
+	grep 'Final output files created' temp/11qc/*.log|cut -f 3 -d '/'|cut -f 1 -d '_' > temp/qc.finished
+	# 筛选末完成样本
+	cat temp/qc.finished <(tail -n+2 result/design.txt) | cut -f 1 | sort | uniq -u > temp/qc.unfinished
+	# 手动运行末完成样本
+  time parallel --xapply -j 8 \
+          "kneaddata -i seq/{1}_1.fq.gz -i seq/{1}_2.fq.gz \
+          -o temp/11qc -v -t 12 --remove-intermediate-output \
+          --trimmomatic /conda/share/trimmomatic-0.38-1/ --trimmomatic-options 'SLIDINGWINDOW:4:20 MINLEN:50' \
+          --bowtie2-options '--very-sensitive --dovetail' -db /db/host/rice/bt2" \
+          ::: `cat temp/qc.unfinished`
+  kneaddata_read_count_table --input temp/11qc --output temp/11kneaddata_stat.txt
+  cut -f 1,2,4,12 temp/11kneaddata_stat.txt | awk 'BEGIN{OFS=FS="\t"} {print $0,$3/$2*100,$4/$3*100}' | sed 's/_1_kneaddata//' | sed '1 s/-nan/Hi-Q%/;s/-nan/rm_host%/' > result/11kneaddata_stat.txt
+  cat result/11kneaddata_stat.txt
 

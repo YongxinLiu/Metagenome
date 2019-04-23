@@ -1,6 +1,6 @@
 SHELL:=/bin/bash
 
-	# 宏基因组第一版流程配置文件，请根据项目具体情况修改 v1.0 2018/9/26
+	# 宏基因组第一版流程配置文件，请根据项目具体情况修改 v1.1 2019/4/23
 	# Config file of Metagenome pipeline version 1, please modify according to experiment design
 
 
@@ -15,7 +15,7 @@ SHELL:=/bin/bash
 	p1=48
 	# make init # 建立分析所需子目录
 	
-	# 准备实验设计(10doc/design.txt)和测序数据(02seq/*.fq)和数据库(修改如下参数)
+	# 准备实验设计(result/design.txt)和测序数据(seq/*.fq.gz)和数据库(修改如下参数)
 
 
 ## 1.1. qc 质控和去宿主
@@ -23,7 +23,7 @@ SHELL:=/bin/bash
 	# 质控软件trimmomatic安装目录
 	trimmomatic_path=/conda/share/trimmomatic-0.38-1/
 	# 宿主基因组bowtie2索引，如人humann, 拟南芥ath/水稻rice/水麦wheat
-	host_bt2=/db/host/wheat/bt2
+	host_bt2=/db/host/rice/bt2
 
 
 ## 1.2. 物种和功能组成定量 humman2

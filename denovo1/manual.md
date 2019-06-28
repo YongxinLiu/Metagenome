@@ -1,153 +1,154 @@
 	# 宏基因组分析流程第一版 —— 输助脚本
 	# Metagenome pipeline version 1 —— Assistant script
 
+
+
 # 1. 有参分析流程 Reference-based pipeline
+
 
 	# 0. 准备工作 Preparation
 
 	# 设置工作目录 Set work directory
 	# ath/2.5T ath/3T rice/miniCore rice/miniCore2 
-	wd=rice/miniCore2
+	wd=rice/miniCore
 	cd ~/$wd
 	
 	# 准备流程 Prepare makefile
 	ln -s /home/meta/soft/Metagenome/denovo1/parameter.md makefile
-	ln -s /home/meta/soft/Metagenome/denovo1/manual.md ./
+	ln -s /home/meta/soft/Metagenome/denovo1/manual.md ./manual.sh
 	
 	# 建立初始工作目录 Create initial working directory
-	make init
+	make 10init
 
 	# 准备原始数据 sequencing raw data (多样本合并和统计见附录1)
 	# 链接数据至工作目录
-  ln -s /mnt/m2/data/meta/$wd/seq/*.gz seq/
+	ln -s /mnt/m2/data/meta/$wd/seq/*.gz seq/
 
 	# 准备实验设计上传到result目录，至少有两列样本名和组名 Experiment design
-	# 复制实验设计模板
-	cp /home/meta/soft/Metagenome/denovo1/result/design.txt result/ 
-	# 或从数据来源处复制实验设计
-	cp /mnt/m2/data/meta/ath/2.5T/metadata.txt result/design.txt
-	cp /mnt/m2/data/meta/rice/miniCore/metadata.txt result/design.txt
-	cp /mnt/m2/data/meta/rice/miniCore2/metadata.txt result/design.txt
-	# 或从样本名中提取
-	ls seq/*.1.fq.gz|cut -f 2 -d '/'|cut -f 1 -d '.'|awk '{print $1"\t"$1}'|sed '1 i SampleID\tGroupID' > result/design.txt
+	# 方法1. 数据来源处复制实验设计(推荐)
+	cp /mnt/m2/data/meta/rice/miniCore/metadata.txt result/metadata.txt
+	# 方法2. 复制实验设计模板并手动填写
+	# cp /home/meta/soft/Metagenome/denovo1/result/design.txt result/metadata.txt
+	# 方法3. 从样本名中提取，并手动补充
+	# ls seq/*_1.fq.gz|cut -f 2 -d '/'|cut -f 1 -d '_'|awk '{print $1"\t"$1}'|sed '1 i SampleID\tGroupID' > result/metadata.txt
 
-## 1.1. 质控并移除宿主(~2d) Quality control & Remove host
 
-  time make qc
-  # 时间较长，如异常中断的处理，见附录2. KneadData中断的手动继续
+## 1.1. 质控并移除宿主 Quality control & Remove host
 
-  ### 1.1.2 质量评估(可选) 
-  
-  time make qa
-  
-  ### 1.1.3 提取上传的Clean数据
-  
-  make submit
+	### 1.1.1 质量评估原始数据(可选)
+	# 一般此步在原始数据多样本合并后统计，分析之前
+	time make 11qa
+
+	### 1.1.2 KneadData移除低质量和宿主
+	time make 11qc
+	# 结果见 result/11kneaddata_stat.txt 高质量、非宿主比例
+	# 时间较长，几小时到几天(~2d)，如异常中断的处理，见附录2. KneadData中断的手动继续
+
+	### 1.1.3 提取上传的Clean数据
+	# 按GSA标准整理上传数据，见submit目录
+	make 11gsa
 
 
 ## 1.2. 物种和功能组成定量 humman2
 
-## 1.2.1 humman2输入文件准备：双端文件cat连接
+	## 1.2.1 humman2输入文件准备：双端文件cat连接
+	make 12humann2_concat
 
-make humann2_concat
+	## 1.2.2 humman2计算，包括metaphlan2
+	make 12humann2
+	# 4.7 Tb水稻数据，8X12线程运行2.5 Days
 
-## 1.2.2 humman2计算，包括metaphlan2
-
-make humman2
-  # 2.5d
-  # real    5568m46.620s
-  # user    292860m16.788s
-  # sys     44782m37.254s
-
-## 1.2.3 功能组成整理 humman2_sum
-
-make humann2_sum
+	## 1.2.3 功能组成整理 humman2_sum
+	make 12humann2_sum
+	# 结果见 result/12humann2目录，有功能通路及物种组成表uniref.tsv、标准化表uniref_relab.tsv，以及拆分功能表unstratified和功能物种对应表stratified
 
 
-## 1.3. 整理物种组成表和基本绘图 Summary metaphlan2 and plot(1m)
+## 1.3. 整理物种组成表和基本绘图 Summary metaphlan2 and plot
 
-### 1.3.1 整理物种组成表 Summary metaphlan2
+	# 结果见result/13metaphlan2目录
 
-make metaphaln2_sum
+	### 1.3.1 整理物种组成表 Summary metaphlan2
+	make 13metaphaln2_sum
+	# 结果taxonomy*文件，有多级物种表.tsv、株水平表.spf用于STAMP分析，以及聚类热图_heatmap_top.pdf观察分组情况
 
-### 1.3.2 GraPhlAn图
+	### 1.3.2 GraPhlAn图
+	make 13metaphaln2_graphlan
+	# 结果taxonomy_graphlan*.pdf，包括主图、图例和注释文本3个文件
 
-make metaphaln2_graphlan
-
-### 1.3.3 物种组成LEfSe差异分析
-
-make metaphaln2_lefse
-  # clade_sep parameter too large, lowered to 0.150169372559; AttributeError: Unknown property axis_bgcolor
+	### 1.3.3 物种组成LEfSe差异分析(可选)
+	# 依赖实验设计，分组比较末确定时，可选跳过此步
+	make 13metaphaln2_lefse
 
 
 ## 1.4. kraken2物种组成(可选 10m)
 
-### 1.4.1 基于NCBI完整基因组数据库的k-mer物种注释 Taxonomy assign by k-mer and based on NCBI database
+	### 1.4.1 基于NCBI完整基因组数据库的k-mer物种注释
+	# Taxonomy assign by k-mer and based on NCBI database
+	make 14kraken2_reads
 
-make kraken2_reads
-  # real    138m30.146s, user    1213m6.731s
-
-### 1.4.2 合并为矩阵 merge into matrix
-
-make kraken2_reads_sum
+	### 1.4.2 合并为矩阵 merge into matrix
+	make 14kraken2_reads_sum
 
 
 
 # 2. 无参分析流程 De novo assemble pipeline
 
-## 2.1. khmer质控 (1.5d)
 
-# 时间过长，不建议使用
-make khmer
+## 2.1. khmer质控(可选)
+
+	# 时间过长(1.5d)，不建议使用
+	# make khmer
 
 
 ## 2.2. Assemble 组装
 
-### 2.2.1 基于khmer质控后序列拼接(可选, 32p, 0.8d/18.9h)
+	# 方法1. 大项目推荐
+	### 2.2.0 基于qc质控序列单样本拼接(大项目)
+	make 22assemble_single
+	# 66个样168G压缩数据分别装为5h 计算过程日志见 temp/22megahit/megahit.log
 
-# khmer提高速度，但拼接速度只提高了50%
-make megahit_all_k
+	# 方法2. 太慢不推荐
+	### 2.2.1 基于khmer质控后序列拼接(可选, 32p, 0.8d/18.9h)
+	# khmer提高速度，但拼接速度只提高了50%
+	# make megahit_all_k
 
-### 2.2.2 基于qc质控后序列拼接 (32p, 1.2d)
+	# 方法3. 小项目推荐
+	### 2.2.2 基于qc质控后序列拼接 (32p, 1.2d)
+	make 22megahit_all
 
-make megahit_all
+	### 2.2.3 megahit_all_quast评估
+	make 22megahit_all_quast
 
-### 2.2.3 megahit_all_quast评估
+	### 2.2.4 Contig定量salmon()
+	make 22megahit_all_salmon
 
-make megahit_all_quast
-
-### 2.2.4 Contig定量salmon
-
-make megahit_all_salmon
-
-### 2.2.5 Contig物种注释 kraken2 (9p, 2m26s)
-
-make kraken2_contig
+	### 2.2.5 Contig物种注释 kraken2 (可选，9p, 2m26s)
+	make 22kraken2_contig
 
 
 ## 2.3. Genome annotation 基因组注释
 
-### 2.3.1 对合并组装的单个contig文件基因注释
+	### 2.3.1 对单样品组装的每个contig文件基因注释(大数据可选)
 
-make prokka_all
+	make 23prokka_single
 
-### 2.3.2 对单样品组装的每个contig文件基因注释(大数据可选)
+	### 2.3.2 对合并组装的单个contig文件基因注释(小样本可选)
 
-make prokka_single
+	make 23prokka_all
 
-### 2.3.3 构建非冗余基集 Non-redundancy gene set(大数据可选)
+	### 2.3.3 构建非冗余基集 Non-redundancy gene set(大数据可选)
 
 	# 90%覆盖度，95%相似度下，拼接结果再聚类基本不变少，如7736减少为7729
-make NRgeneSet
+	make NRgeneSet
 
 
-### 2.3.4 基因定量 salmon genes
+	### 2.3.4 基因定量 salmon genes
 
-make salmon_gene
+	make salmon_gene
 
-### 2.3.5 基因物种注释 kraken2 annotate gene
+	### 2.3.5 基因物种注释 kraken2 annotate gene
 
-make kraken2_gene
+	make kraken2_gene
 
 
 ## 2.4 功能数据库注释
@@ -1058,13 +1059,17 @@ sourmash plot --labels sourmash/Hu_meta
 	# 筛选末完成样本
 	cat temp/qc.finished <(tail -n+2 result/design.txt) | cut -f 1 | sort | uniq -u > temp/qc.unfinished
 	# 手动运行末完成样本
-  time parallel --xapply -j 8 \
-          "kneaddata -i seq/{1}_1.fq.gz -i seq/{1}_2.fq.gz \
-          -o temp/11qc -v -t 12 --remove-intermediate-output \
-          --trimmomatic /conda/share/trimmomatic-0.38-1/ --trimmomatic-options 'SLIDINGWINDOW:4:20 MINLEN:50' \
-          --bowtie2-options '--very-sensitive --dovetail' -db /db/host/rice/bt2" \
-          ::: `cat temp/qc.unfinished`
+time parallel --xapply -j 8 \
+  "kneaddata -i seq/{1}_1.fq.gz -i seq/{1}_2.fq.gz \
+  -o temp/11qc -v -t 12 --remove-intermediate-output \
+  --trimmomatic /conda/share/trimmomatic-0.38-1/ --trimmomatic-options 'SLIDINGWINDOW:4:20 MINLEN:50' \
+  --bowtie2-options '--very-sensitive --dovetail' -db /db/host/human/Homo_sapiens" \
+  ::: `cat temp/qc.unfinished`
   kneaddata_read_count_table --input temp/11qc --output temp/11kneaddata_stat.txt
   cut -f 1,2,4,12 temp/11kneaddata_stat.txt | awk 'BEGIN{OFS=FS="\t"} {print $0,$3/$2*100,$4/$3*100}' | sed 's/_1_kneaddata//' | sed '1 s/-nan/Hi-Q%/;s/-nan/rm_host%/' > result/11kneaddata_stat.txt
   cat result/11kneaddata_stat.txt
+	# 常见错误
+	# Critical Error: Unable to gunzip input file: seq/QBD7BPX1T_1.fq.gz
+	# zlib.error: Error -3 while decompressing: invalid distance too far back
+	# fastq文件可能传输中出错，重复找测序公司重传；这些数据一般用fastqc评估也无法通过
 

@@ -1,30 +1,35 @@
 # 宏基因组软件和数据库安装
 
-  # 测试环境为Ubuntu 18.04.1 LTS
+	# 测试环境为Ubuntu 18.04.1 LTS
 
 
+  # 调置数据库存放位置，如~/db目录，务必存于自己有权限的位置
+  # 本处设为/db根目录方便多从使用，需要管理员权限
+  db=/db
+  mkdir -p $db
+  
 
 ## 软件管理器miniconda2
 
-  cd 
-  mkdir -p soft && cd soft
-  wget -c https://repo.continuum.io/miniconda/Miniconda2-latest-Linux-x86_64.sh
-  bash Miniconda2-latest-Linux-x86_64.sh
-  # 正常默认即可，为方便多人使用目录更短，我安装在/conda目录
-  # 安装说明详见：[Nature Method：Bioconda解决生物软件安装的烦恼](https://mp.weixin.qq.com/s/SzJswztVB9rHVh3Ak7jpfA)
-  # 添加通道
-  conda config --add channels conda-forge
-  conda config --add channels bioconda
-  # 添加清华镜像加速下载
-  site=https://mirrors.tuna.tsinghua.edu.cn/anaconda
-  conda config --add channels ${site}/pkgs/free/ 
-  conda config --add channels ${site}/pkgs/main/
-  conda config --add channels ${site}/cloud/conda-forge/
-  conda config --add channels ${site}/pkgs/r/
-  conda config --add channels ${site}/cloud/bioconda/
-  conda config --add channels ${site}/cloud/msys2/
-  conda config --add channels ${site}/cloud/menpo/
-  conda config --add channels ${site}/cloud/pytorch/
+	cd 
+	mkdir -p soft && cd soft
+	wget -c https://repo.continuum.io/miniconda/Miniconda2-latest-Linux-x86_64.sh
+	bash Miniconda2-latest-Linux-x86_64.sh
+	# 正常默认即可，为方便多人使用目录更短，我安装在/conda目录
+	# 安装说明详见：[Nature Method：Bioconda解决生物软件安装的烦恼](https://mp.weixin.qq.com/s/SzJswztVB9rHVh3Ak7jpfA)
+	# 添加通道
+	conda config --add channels conda-forge
+	conda config --add channels bioconda
+#	# 添加清华镜像加速下载
+#	site=https://mirrors.tuna.tsinghua.edu.cn/anaconda
+#	conda config --add channels ${site}/pkgs/free/ 
+#	conda config --add channels ${site}/pkgs/main/
+#	conda config --add channels ${site}/cloud/conda-forge/
+#	conda config --add channels ${site}/pkgs/r/
+#	conda config --add channels ${site}/cloud/bioconda/
+#	conda config --add channels ${site}/cloud/msys2/
+#	conda config --add channels ${site}/cloud/menpo/
+#	conda config --add channels ${site}/cloud/pytorch/
 
 
 ## 质控软件
@@ -70,6 +75,25 @@
   # 添加环境变量，否则需要使用脚本所在的完整路径
   # 添加目录至环境变量，注释修改位置
   echo "export PATH=`pwd`/microbiome_helper:`pwd`/Metagenome/denovo1/script/:\$PATH" >> ~/.bashrc
+
+  # 自定义数据库，添加真菌
+  cd $db
+  cp -r kraken2 kraken2mod
+  # 下载数据库，先设置存放位置
+	# 下载物种注释
+	kraken2-build --download-taxonomy --threads 24 --db ${db}/kraken2mod
+
+	# 下载非默认数据库archaea bacteria plasmid viral human	fungi plant protozoa nr nt env_nr env_nt UniVec
+	kraken2-build --download-library fungi --threads 24 --db ${db}/kraken2mod
+	kraken2-build --download-library plant --threads 24 --db ${db}/kraken2mod
+	# 批量下载，非标准数据库
+	for i in fungi plant protozoa; do
+	kraken2-build --download-library $i --threads 24 --db ${db}/kraken2mod
+	done
+
+	# 确定的库建索引
+	kraken2-build --build --threads 24 --db ${db}/kraken2mod
+
 
 
 ## 基因组拼接、注释和定量
@@ -122,11 +146,6 @@
 
 # 附录 Appendix
 
-  # 调置数据库存放位置，如~/db目录，务必存于自己有权限的位置
-  # 本处设为/db根目录方便多从使用，需要管理员权限
-  db=/db
-  mkdir -p $db
-  
 ## 核糖体数据库
 
 mkdir -p $db/rDNA

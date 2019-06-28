@@ -61,13 +61,14 @@ help:
 	# 更新日志 Update log
 	# 2018-09-12 Add kneaddata, humann2 for reference based pipeline
 	# 2018-09-23 Add kraken2 for taxonomy in reads levels, salmon genes quaitity
+	# 2019-06-06 Update
 
 
 
 # 1. 有参分析流程 Reference-based pipeline
 
 
-init:
+10init:
 	# 清理零字节文件重启项目 Clean zero-byte files, restart project
 	find . -name "*" -type f -size 0c | xargs -n 1 rm -f
 	# 建立程序必须目录 Create basic directory
@@ -83,7 +84,7 @@ init:
 ## 1.1.1 质量评估 Quality access
 	
 	# 此步选做，一般原始序列合并时已经统计过数据量
-qa: init
+11qa: 10init
 	touch $@
 	# 质量评估 Quality access
 	time fastqc -t ${p1} seq/*1.fq.gz
@@ -93,7 +94,7 @@ qa: init
 
 ## 1.1.2 质控并移除宿主 Quality control & Remove host
 
-qc: init
+11qc: 10init
 	touch $@
 	mkdir -p temp/11qc
 	# 并行质控去宿主 kneaddata call trimmomatic quality control and bowtie2 remove host
@@ -110,7 +111,7 @@ qc: init
 ## 1.13 提交数据准备 Submit clean data
 
 	# 保存质控和去宿主后数据至seq/clean目录，连同保存宿主比例
-gsa: qc
+11gsa: 11qc
 	touch $@
 	mkdir -p submit
 	# hard link to clean
@@ -127,23 +128,24 @@ gsa: qc
 	sed -i 's/submit\///g' submit/md5sum.txt
 	cat submit/md5sum.txt
 
+
 ## 1.2. 物种和功能组成定量 humann2
 
 ### 1.2.1 humann2输入文件准备：双端文件cat连接
 
-humann2_concat: qc
+12humann2_concat: 11qc
 	touch $@
 	# 生成humann2输入要求的合并文件 cat pair-end for humann2
 	mkdir -p temp/12concat
 	parallel --xapply -j ${j} \
 		"cat temp/11qc/{1}*data_paired* > temp/12concat/{1}.fq" \
-		::: `tail -n+2 result/design.txt | cut -f 1`
+		::: `tail -n+2 result/metadata.txt | cut -f 1`
 	# 查看样品数量和大小 show samples size
 	ls -l temp/12concat/*.fq
 
 ### 1.2.2 humann2计算，包括metaphlan2
 
-humann2: humann2_concat
+12humann2: 12humann2_concat
 	touch $@
 	mkdir -p temp/12humann2
 	time parallel -j ${j} \
@@ -153,7 +155,7 @@ humann2: humann2_concat
 
 ### 1.2.3 功能组成整理 humann2_sum
 
-humann2_sum: humann2
+12humann2_sum: 12humann2
 	touch $@
 	mkdir -p result/12humann2
 	# 合并所有样品，通路包括各功能和具体的物种组成，还有基因家族(太多)，通路覆盖度层面可以进分析
@@ -172,7 +174,7 @@ humann2_sum: humann2
 
 ### 1.3.1 整理物种组成表 Summary metaphlan2
 
-metaphaln2_sum: humann2_sum
+13metaphaln2_sum: 12humann2_sum
 	touch $@
 	# metaphlan2功能组成
 	mkdir -p result/13metaphlan2
@@ -188,7 +190,7 @@ metaphaln2_sum: humann2_sum
 
 ### 1.3.2 GraPhlAn图
 
-metaphaln2_graphlan: metaphaln2_sum
+13metaphaln2_graphlan: 13metaphaln2_sum
 	touch $@
 	# metaphlan2 to graphlan
 	export2graphlan.py --skip_rows 1,2 -i result/13metaphlan2/taxonomy.tsv \
@@ -200,9 +202,11 @@ metaphaln2_graphlan: metaphaln2_sum
 	# output PDF figure, annoat and legend
 	graphlan.py temp/13ref_taxonomy.xml result/13metaphlan2/taxonomy_graphlan.pdf --external_legends --dpi 300 
 
-### 1.3.3 物种组成LEfSe差异分析
+### 1.3.3 物种组成LEfSe差异分析(可选)
 
-metaphaln2_lefse: metaphaln2_graphlan
+	# 需要有完整的实验分组，且样本末尾数字为样本重复编号才可分析
+
+13metaphaln2_lefse: 13metaphaln2_graphlan
 	touch $@
 	mkdir -p result/13metaphlan2_lefse
 	# LEfSe差异分析和Cladogram
@@ -225,34 +229,50 @@ metaphaln2_lefse: metaphaln2_graphlan
 
 ### 1.4.1 基于NCBI完整基因组数据库的k-mer物种注释 Taxonomy assign by k-mer and based on NCBI database
 
-kraken2_reads: qc
+14kraken2_reads: 11qc
 	touch $@
 	mkdir -p temp/14kraken2_reads
+	# Based on submited clean data
 	time parallel -j ${j} \
-		'kraken2 --db ${kraken2_db} --paired temp/11qc/{1}_1_kneaddata_paired*.fastq \
+		'kraken2 --db ${kraken2_db} --paired submit/{1}*.fq.gz \
 		--threads ${p} --use-names --use-mpa-style --report-zero-counts \
 		--report temp/14kraken2_reads/{1}_report \
-		--output temp/14kraken2_reads/{1}_output' \
-		::: `tail -n+2 result/design.txt | cut -f 1`
+		--output temp/14kraken2_reads/{1}_output' >> temp/14kraken2_reads/kraken2.log 2>&1 \
+		::: `tail -n+2 result/metadata.txt | cut -f 1`
 
 ### 1.4.2 合并为矩阵 merge into matrix
 
-kraken2_reads_sum: kraken2_reads
+14kraken2_reads_sum: 14kraken2_reads
 	touch $@
 	mkdir -p result/14kraken2_reads
 	parallel -j ${j} \
-		'cut -f 2 temp/14kraken2_reads/{1}_report | sed "1 s/^/{1}\n/" > temp/14kraken2_reads/{1}_count ' \
-		::: `tail -n+2 result/design.txt | cut -f 1`
-	cut -f 1 temp/14kraken2_reads/${kraken2_header}_report | sed "1 s/^/Taxonomy\n/" > temp/14kraken2_reads/0header_count
+		'sort temp/14kraken2_reads/{1}_report | cut -f 2 | sed "1 s/^/{1}\n/" > temp/14kraken2_reads/{1}_count ' \
+		::: `tail -n+2 result/metadata.txt | cut -f 1`
+	sort temp/14kraken2_reads/${kraken2_header}_report | cut -f 1 | sed "1 s/^/Taxonomy\n/" > temp/14kraken2_reads/0header_count
 	paste temp/14kraken2_reads/*count > result/14kraken2_reads/taxonomy_count.txt
 
+## 1.5 Clean 清理有参过程临时文件
+
+15clean_ref: 
+	touch $@
+	# 1.1 质控qc质控后归档为submit，删除qc临时文件
+	rm -rf temp/11qc
+	# 1.2 humman2筛选文件
+	rm -rf temp/12concat
+	# 备份临时文件中的metaphlan2重要结果
+	mkdir temp/12metaphlan2
+	cp -f temp/12humann2/*_humann2_temp/*_metaphlan_bugs_list.tsv temp/12metaphlan2/
+	# 删除humann2筛选文件
+	rm -rf temp/12humann2/*temp
+	# 1.4 kraken2比对文件
+	rm -r temp/14kraken2_reads/*output
 
 
 # 2. 无参分析流程 De novo assemble pipeline
 
 ## 2.1. khmer质控(可选)
 
-khmer: qc
+21khmer: 11qc
 	touch $@
 	mkdir -p temp/21khmer
 	# -V is metagenome, not single genome. -M set max memory for save server. -f force write
@@ -260,51 +280,75 @@ khmer: qc
 		'interleave-reads.py temp/11qc/{1}_1_kneaddata_paired_1.fastq temp/11qc/{1}_1_kneaddata_paired_2.fastq | \
 		trim-low-abund.py -V -M ${khmer_memory} -Z ${khmer_high} -C ${khmer_low} - -o temp/21khmer/{1}.fq; \
 		split-paired-reads.py -f -0 temp/21khmer/{1}_0.fq -1 temp/21khmer/{1}_1.fq -2 temp/21khmer/{1}_2.fq temp/21khmer/{1}.fq' \
-		::: `tail -n+2 result/design.txt | cut -f 1`
+		::: `tail -n+2 result/metadata.txt | cut -f 1`
+
 
 ## 2.2. Assemble 组装
 
+### 2.2.0 基于qc质控序列单样本组装(大项目)
+
+	# ifseq, else, endif必须顶格写
+22assemble_single: 11gsa
+	touch $@
+	echo -e "Assemble method: ${assemble_method}\nAssemble mode: assemble single\n"
+ifeq (${assemble_method}, megahit)
+	# 采用metahit单样品拼接
+	# rm -rf temp/22megahit
+	mkdir -p temp/22megahit
+	time parallel -j ${j} \
+		'megahit -t ${p1} --k-min ${kmin} --k-max ${kmax} --k-step ${kstep} \
+		-1 submit/{1}_1.fq.gz -2 submit/{1}_2.fq.gz \
+		-o temp/22megahit/{1} >> temp/22megahit/megahit.log 2>&1 ' \
+		::: `tail -n+2 result/metadata.txt | cut -f 1`
+else ifeq (${assemble_method}, metaspades)
+	# metaspades单样品拼接
+	parallel --xapply -j ${j} \
+		"metaspades.py -t ${p} -m 500 \
+		-1 temp/11qc/{1}_1_kneaddata_paired_1.fastq \
+		-2 temp/11qc/{1}_1_kneaddata_paired_2.fastq \
+		-o temp/22metaspades/{1}" \
+		::: `tail -n+2 result/metadata.txt | cut -f 1`
+else
+	# 其它：没有提供正确的方法名称，报错提示
+	$(error "Please select the right method: one of in megahit or metaspades")
+endif
+	echo -ne 'Assemble finished!!!\n' 
+
 ### 2.2.1 基于khmer质控后序列拼接(可选)
 
-megahit_all_k: khmer
+22megahit_all_k: 21khmer
 	touch $@
 	# 采用metahit拼接所有样本
-	rm -rf temp/22megahit_all_k
-	time megahit -t ${meta_threads} --k-min ${kmin} --k-max ${kmax} --k-step ${kstep} \
+	# rm -rf temp/22megahit_all
+	time megahit -t ${p1} --k-min ${kmin} --k-max ${kmax} --k-step ${kstep} \
 	-1 `ls temp/21khmer/*_1.fq|tr '\n' ','|sed 's/,$$//'` \
 	-2 `ls temp/21khmer/*_1.fq|tr '\n' ','|sed 's/,$$//'` \
-	-o temp/22megahit_all_k
+	-o temp/22megahit_all
 
-### 2.2.2 基于qc质控后序列拼接
+### 2.2.2 基于qc质控后序列混合组装(6-30个样品小项目)
 
-megahit_all: khmer
+22megahit_all: 11qc
 	touch $@
 	# 采用metahit拼接所有样本，理论上双端序列文件大小完全相关，为何有差异
-	rm -rf temp/22megahit_all
-	time megahit -t ${meta_threads} --k-min ${kmin} --k-max ${kmax} --k-step ${kstep} \
-	-1 `ls temp/11qc/*_paired_1.fastq|tr '\n' ','|sed 's/,$$//'` \
-	-2 `ls temp/11qc/*_paired_2.fastq|tr '\n' ','|sed 's/,$$//'` \
-	-o temp/22megahit_all
+	# rm -rf temp/22megahit_all
+	time megahit -t ${p1} --k-min ${kmin} --k-max ${kmax} --k-step ${kstep} \
+		-1 `ls temp/11qc/*_paired_1.fastq|tr '\n' ','|sed 's/,$$//'` \
+		-2 `ls temp/11qc/*_paired_2.fastq|tr '\n' ','|sed 's/,$$//'` \
+		-o temp/22megahit_all
 
 ## 2.2.3 megahit_all_quast评估
 
-megahit_all_quast_k: megahit_all_k
+	# 依赖 22megahit_all | 22megahit_all_k
+22megahit_all_quast: 22megahit_all
 	touch $@
 	# 拼接结果评估
 	mkdir -p result/22megahit_all
-	time quast.py -o temp/22megahit_all_k/ -m ${quast_len} -t ${p} temp/22megahit_all_k/final.contigs.fa
-	ln -f temp/22megahit_all_k/report.html result/22megahit_all/quast_report_k.html
-
-megahit_all_quast: megahit_all
-	touch $@
-	# 拼接结果评估
-	mkdir -p result/22megahit_all
-	time quast.py -o temp/22megahit_all/ -m ${quast_len} -t ${p} temp/22megahit_all/final.contigs.fa
-	ln -f temp/22megahit_all/report.html result/22megahit_all/quast_report.html
+	ln -f temp/22megahit_all/final.contigs.fa result/22megahit_all/
+	time quast.py -o result/22megahit_all/ -m ${quast_len} -t ${p} result/22megahit_all/final.contigs.fa
 
 ### 2.2.4 Contig定量salmon
 
-megahit_all_salmon: megahit_all_quast
+22megahit_all_salmon: 22megahit_all_quast
 	touch $@
 	mkdir -p temp/22salmon_contig
 	# 1. 建索引
@@ -316,7 +360,7 @@ megahit_all_salmon: megahit_all_quast
 		'salmon quant -i temp/22salmon_contig/index -l A -p ${p} --meta \
 		-1 temp/11qc/{1}_1_kneaddata_paired_1.fastq -2 temp/11qc/{1}_1_kneaddata_paired_2.fastq \
 		-o temp/22salmon_contig/{1}.quant' \
-		::: `tail -n+2 result/design.txt | cut -f 1`
+		::: `tail -n+2 result/metadata.txt | cut -f 1`
 	# 3. 合并
 	salmon quantmerge --quants temp/22salmon_contig/*.quant -o result/22megahit_all/contig.TPM
 	salmon quantmerge --quants temp/22salmon_contig/*.quant --column NumReads -o result/22megahit_all/contig.count
@@ -324,7 +368,7 @@ megahit_all_salmon: megahit_all_quast
 
 ### 2.2.5 Contig物种注释 kraken2
 
-kraken2_contig: megahit_all_salmon
+22kraken2_contig: 22megahit_all_salmon
 	touch $@
 	kraken2 --db ${kraken2_db} temp/22megahit_all/final.contigs.fa \
 	--threads ${p} --use-names \
@@ -332,108 +376,95 @@ kraken2_contig: megahit_all_salmon
 	# report 为 contig.count的物种注释
 
 
-	# 单样品批量拼接
-	# ifseq, else, endif必须顶格写
-megahit_single: qc
-	touch $@
-	echo -e "Assemble method: ${assemble_method}\nAssemble mode: ${assemble_mode}\n"
-ifeq (${assemble_method}, megahit)
-	# 采用metahit单样品拼接
-	parallel --xapply -j ${j} \
-		"rm -r temp/22megahit/{1}; megahit -t ${p} \
-		-1 temp/11qc/{1}_1_kneaddata_paired_1.fastq \
-		-2 temp/11qc/{1}_1_kneaddata_paired_2.fastq \
-		-o temp/22megahit/{1}" \
-		::: `tail -n+2 result/design.txt | cut -f 1`
-else ifeq (${assemble_method}, metaspades)
-	# metaspades单样品拼接
-	parallel --xapply -j ${j} \
-		"metaspades.py -t ${p} -m 500 \
-		-1 temp/11qc/{1}_1_kneaddata_paired_1.fastq \
-		-2 temp/11qc/{1}_1_kneaddata_paired_2.fastq \
-		-o temp/22metaspades/{1}" \
-		::: `tail -n+2 result/design.txt | cut -f 1`
-else
-	# 其它：没有提供正确的方法名称，报错提示
-	$(error "Please select the right method: one of in megahit or metaspades")
-endif
-	echo -ne 'Assemble finished!!!\n' 
+## 2.3. Gene annotation 基因注释
 
-
-
-## 2.3. Genome annotation 基因组注释
-
-### 2.3.1 对合并组装的单个contig文件基因注释
-
-prokka_all: kraken2_contig
-	touch $@
-	time prokka temp/22megahit_all/final.contigs.fa --outdir temp/23prokka_all \
-	-prefix mg --metagenome --force --cpus ${prokka_threads} \
-	--kingdom Archaea,Bacteria,Mitochondria,Viruses
-	mkdir -p temp/23NRgene
-	cp temp/23prokka_all/mg.ffn temp/23NRgene/mg.ffn
-
-### 2.3.2 对单样品组装的每个contig文件基因注释(大数据可选)
+### 2.3.1 对单样品组装的每个contig文件基因注释(大数据可选)
 
 	# ifseq, else, endif必须顶格写
-prokka_single: megahit_single
-#	touch $@
-	echo -e "Assemble method: ${assemble_method}\nAssemble mode: ${assemble_mode}\n"
+23prokka_single: 22assemble_single
+	touch $@
+	echo -e "Assemble method: ${assemble_method}\nAssemble mode: assemble single\n"
 ifeq (${assemble_method}, megahit)
 	# 采用metahit单样品拼接
 	time parallel --xapply -j ${j} \
 		"prokka temp/22megahit/{1}/final.contigs.fa --outdir temp/23prokka/{1} \
 		-prefix mg --metagenome --force --cpus ${p} \
-		--kingdom Archaea,Mitochondria,Viruses" \
-		::: `tail -n+2 result/design.txt | cut -f 1`
+		--kingdom Archaea,Bacteria,Mitochondria,Viruses" \
+		::: `tail -n+2 result/metadata.txt | cut -f 1`
 	# DNA level
-	cat 03temp/23prokka/*/mg.ffn > 03temp/24NRgene/mg.ffn
+	cat temp/23prokka/*/mg.ffn > temp/23prokka/mg.ffn
 else ifeq (${assemble_method}, metaspades)
 	# metaspades单样品拼接
 else
 	# 其它：没有提供正确的方法名称，报错提示
 	$(error "Please select the right method: one of in megahit or metaspades")
 endif
-	echo -ne 'Assemble finished!!!\n' 
+	# 复制结果到新目录，单/多样本分析汇总
+	mkdir -p temp/23NRgene
+	cp temp/23prokka/mg.ffn temp/23NRgene/
+	echo -ne 'Prokka single genes\t' > result/gene.log
+	grep -c '>' temp/23NRgene/mg.ffn >> result/gene.log
+
+### 2.3.2 对合并组装的单个contig文件基因注释
+
+23prokka_all: 22megahit_all_quast
+	touch $@
+	time prokka temp/22megahit_all/final.contigs.fa --outdir temp/23prokka_all \
+	-prefix mg --metagenome --force --cpus ${p1} \
+	--kingdom Archaea,Bacteria,Mitochondria,Viruses
+	mkdir -p temp/23NRgene
+	ln temp/23prokka_all/mg.ffn temp/23NRgene/
+
+23prokka_all_check: 
+	# prokka默认步骤较多，但我们需要的基因注释可能已经完成
+	# 检查文件时间，如小于当前已经完成，可手动转换并继续
+	ll temp/23prokka_all/mg.ffn
+	mkdir -p temp/23NRgene
+	cp temp/23prokka_all/mg.ffn temp/23NRgene/
+	echo -ne 'Prokka all genes\t' > result/gene.log
+	grep -c '>' temp/23NRgene/mg.ffn >> result/gene.log
+	cat result/gene.log
+
 
 ### 2.3.3 构建非冗余基集 Non-redundancy gene set(大数据可选)
 
-NRgeneSet: 
-	#	touch $@
-	grep -c '>' temp/23NRgene/mg.ffn
+23NRgeneSet: 
+	touch $@
 	# -c  sequence identity threshold, default 0.9; -M  max available memory (Mbyte), default 400; -l  length of throw_away_sequences, default 10
-	/conda2/bin/cd-hit-est -i temp/23NRgene/mg.ffn -o temp/23NRgene/mg.ffn.nr -aS ${cdhit_coverage} -c ${cdhit_similarity} -G 0 -M ${cdhit_mem} -T ${p} -n 5 -d 0 -g 1
+	cd-hit-est -i temp/23NRgene/mg.ffn -o temp/23NRgene/mg.ffn.nr -aS ${cdhit_coverage} -c ${cdhit_similarity} -G 0 -M ${cdhit_mem} -T ${p1} -n 10 -d 0 -g 1
 	# 统计基因数据，确定ID是否非冗余
-	grep -c '>' temp/23NRgene/mg.ffn.nr
-#	# protein level
-#	cat temp/23prokka/*/mg.faa > temp/23NRgene/mg.faa
-#	grep -c '>' temp/23NRgene/mg.faa
-#	# aS覆盖度, c相似度, n字长，G本地，M内存，-d描述字长，r准确慢模式
-#	/conda2/bin/cd-hit -i temp/23NRgene/mg.faa -o temp/23NRgene/mg.faa.nr -aS 0.9 -c 0.95 -G 0 -M 900 -T ${p} -n 5 -d 0 -g 1 # 
-#	grep -c '>' temp/23NRgene/mg.faa.nr
+	echo -ne 'NRgeneSet\t' >> result/gene.log
+	grep -c '>' temp/23NRgene/mg.ffn.nr >> result/gene.log
+	cat result/gene.log
+	## protein level
+	#cat temp/23prokka/*/mg.faa > temp/23NRgene/mg.faa
+	#grep -c '>' temp/23NRgene/mg.faa
+	## aS覆盖度, c相似度, n字长，G本地，M内存，-d描述字长，r准确慢模式
+	#cd-hit -i temp/23NRgene/mg.faa -o temp/23NRgene/mg.faa.nr -aS 0.9 -c 0.95 -G 0 -M ${cdhit_mem} -T ${p1} -n 5 -d 0 -g 1
+	#grep -c '>' temp/23NRgene/mg.faa.nr
 
 ### 2.3.4 基因定量 salmon genes
 
-salmon_gene: prokka_all
+23salmon_gene: 23NRgeneSet
 	touch $@
 	mkdir -p temp/23salmon_gene
 	# 1. 建索引
 	# -t 转录本序列，--type 类型fmd/quasi，-k kmer长度默认31, -i 索引
-	salmon index -t temp/23prokka_all/mg.ffn -p ${p} \
+	salmon index -t temp/23NRgene/mg.ffn.nr -p ${p} \
 		-i temp/23salmon_gene/index --type quasi -k ${salmon_kmer}
 	# 2. 定量
 	parallel -j ${j} \
 		'salmon quant -i temp/23salmon_gene/index -l A -p ${p} --meta \
-		-1 temp/11qc/{1}_1_kneaddata_paired_1.fastq -2 temp/11qc/{1}_1_kneaddata_paired_2.fastq \
+		-1 submit/{1}_1.fq.gz -2 submit/{1}_2.fq.gz \
 		-o temp/23salmon_gene/{1}.quant' \
-		::: `tail -n+2 result/design.txt | cut -f 1`
+		::: `tail -n+2 result/metadata.txt | cut -f 1`
 	# 3. 合并
 	mkdir -p result/23salmon_gene
 	salmon quantmerge --quants temp/23salmon_gene/*.quant -o result/23salmon_gene/gene.TPM
 	salmon quantmerge --quants temp/23salmon_gene/*.quant --column NumReads -o result/23salmon_gene/gene.count
 	sed -i '1 s/.quant//g' result/23salmon_gene/gene.*
 
-### 2.3.5 基因物种注释 kraken2 annotate gene
+### 2.3.5 基因物种注释 kraken2 annotate gene(可选)
 
 kraken2_gene: salmon_gene
 	touch $@
@@ -484,7 +515,7 @@ eggnog_sum: eggnog
 	Rscript ~/github/Metagenome/denovo1/script/mat_gene2ko.R -i temp/24eggnog/gene_ko.count -o result/24eggnog/kotab -n ${unit}
 	# KO对应的描述
 	# awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print $$0,a[$$1]}' /db/kegg/ko_description.txt result/24eggnog/kotab.count > result/24eggnog/kotab.count.anno
-	# STAMP的spf格式，结果design.txt进行KO或Description差异比较
+	# STAMP的spf格式，结果metadata.txt进行KO或Description差异比较
 	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print a[$$1],$$0}' /db/kegg/ko_description.txt result/24eggnog/kotab.count | sed 's/^\t/Undescription\t/' > result/24eggnog/kotab.count.spf
 
 	# 2. COG注释表
@@ -499,7 +530,7 @@ eggnog_sum: eggnog
 	# 合并基因表为cog表，输出count值和tpm值
 	sed -i '1 s/\tCOG/\tKO/' temp/24eggnog/gene_cog.count
 	Rscript ~/github/Metagenome/denovo1/script/mat_gene2ko.R -i temp/24eggnog/gene_cog.count -o result/24eggnog/cogtab -n ${unit}
-	# cog对应的描述，STAMP的spf格式，结果design.txt进行cog或Description差异比较
+	# cog对应的描述，STAMP的spf格式，结果metadata.txt进行cog或Description差异比较
 	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2"\t"$$3} NR>FNR{print a[$$1],$$0}' /mnt/zhou/yongxin/db/eggnog/COG_one_letter_code_descriptions.tsv result/24eggnog/cogtab.count | sed 's/^\t/Undescription\t/' > result/24eggnog/cogtab.count.spf
 	# 添加整理柱状图，和分组柱状图
 
@@ -507,12 +538,12 @@ eggnog_sum: eggnog
 	# 提取基因anno分类表，基因1对多个anno时只提取第一个anno
 	cut -f 1,13 temp/24eggnog/output_file|cut -f 1 -d ','|grep -v -P '\t$$' > temp/24eggnog/3anno.list
 	wc -l temp/24eggnog/3anno.list # 5173基因有anno注释，远高于KEGG_76的4288
-	# anno对应的描述，STAMP的spf格式，没注释的基因删除，结果design.txt进行anno或Description差异比较
+	# anno对应的描述，STAMP的spf格式，没注释的基因删除，结果metadata.txt进行anno或Description差异比较
 	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print a[$$1],$$0}' temp/24eggnog/3anno.list result/23salmon_gene/gene.count | grep -v -P '^\t' > result/24eggnog/annotab.count.spf # sed 's/^\t/Undescription\t/'
 	#	# 添加COG分类
 	#	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print a[$$2],$$0}' temp/24eggnog/1cog.list result/24eggnog/annotab.count.spf > temp/24eggnog/cogannotab.count.spf # | sed 's/^\t/Undescription\t/'
 	#	sed -i '1 s/COG/ID/' temp/24eggnog/cogannotab.count.spf
-	#	# 添加COG对应的描述，STAMP的spf格式，结果design.txt进行cog或Description差异比较，非严格层级，stamp无法打开
+	#	# 添加COG对应的描述，STAMP的spf格式，结果metadata.txt进行cog或Description差异比较，非严格层级，stamp无法打开
 	#	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2"\t"$$3} NR>FNR{print a[$$1],$$0}' /mnt/zhou/yongxin/db/eggnog/COG_one_letter_code_descriptions.tsv temp/24eggnog/cogannotab.count.spf > result/24eggnog/cogannotab.count.spf # | sed 's/^\t/Undescription\t/'
 
 

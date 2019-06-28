@@ -6,15 +6,14 @@ SHELL:=/bin/bash
 
 # 1. 有参分析流程参数 Parameters of reference-based pipeline
 
-	## 工作目录 Working directory
+	# 工作目录 Working directory
 	# 修改wd为当前工作目录pwd
 	wd=`pwd`
 	# 设置j最大运行任务/p线程数/p1非并行任务线程数，超过CPU数量效率反而会降低
-	j=8
-	p=12
-	p1=48
+	j=5
+	p=8
+	p1=32
 	# make init # 建立分析所需子目录
-	
 	# 准备实验设计(result/design.txt)和测序数据(seq/*.fq.gz)和数据库(修改如下参数)
 
 
@@ -22,8 +21,8 @@ SHELL:=/bin/bash
 	
 	# 质控软件trimmomatic安装目录
 	trimmomatic_path=/conda/share/trimmomatic-0.38-1/
-	# 宿主基因组bowtie2索引，如人humann, 拟南芥ath/水稻rice/水麦wheat
-	host_bt2=/db/host/rice/bt2
+	# 宿主基因组bowtie2索引，如人human/Homo_sapiens, 拟南芥ath/水稻rice/水麦wheat/bt2
+	host_bt2=/db/host/human/Homo_sapiens
 
 
 ## 1.2. 物种和功能组成定量 humman2
@@ -45,7 +44,7 @@ SHELL:=/bin/bash
 
 ## 2.1. khmer质控
 
-	# 去除覆盖度>10区域，<3的低频kmer
+	# 去除覆盖度>20区域，<3的低频kmer
 	khmer_high=20
 	khmer_low=2
 	# 内存上限，最小8G，可根据内存调整，如1TB内存8个任务运行，可最大设置64G，保证内存使用不过半
@@ -54,8 +53,6 @@ SHELL:=/bin/bash
 ## 2.2. 组装 Assemble
 
 	# megahit参数
-	# megahit线程数
-	meta_threads=32
 	# 最小kmin，默认21，越小计算量越大，土壤推荐27，25-31范围合理
 	kmin=27
 	# 最长kmer，默认141适合PE150数据，PE100可设为91
@@ -78,7 +75,6 @@ SHELL:=/bin/bash
 
 	# 基因注释软件选择 Choose assemble method: prokka / prodigal(基因存在多转录本，暂不考虑)
 	annotation_method=prokka
-	prokka_threads=32
 
 ### 2.3.3 构建非冗余基集 Non-redundancy gene set(大数据可选)
 

@@ -1,13 +1,13 @@
 # 宏基因组软件和数据库安装
 
-	# 测试环境为Ubuntu 18.04.1 LTS
+	# 测试环境为 Ubuntu 18.04.2 LTS (GNU/Linux 4.15.0-51-generic x86_64)、 CentOS Linux release 7.3.1611 (Core)
+	# Ubuntu登陆时默认显示系统版本，可用`cat /etc/issue`命令查看；CentOS使用`cat /etc/redhat-release`查看系统版本
 
+	# 设置数据库存放位置，如`~/db`目录，务必存于自己有权限的位置
+	# 本此设置为`/db`根目录下，方便多人使用，需要管理员权限
+	db=/db
+	mkdir -p ${db}
 
-  # 调置数据库存放位置，如~/db目录，务必存于自己有权限的位置
-  # 本处设为/db根目录方便多从使用，需要管理员权限
-  db=/db
-  mkdir -p $db
-  
 
 ## 软件管理器miniconda2
 
@@ -15,66 +15,66 @@
 	mkdir -p soft && cd soft
 	wget -c https://repo.continuum.io/miniconda/Miniconda2-latest-Linux-x86_64.sh
 	bash Miniconda2-latest-Linux-x86_64.sh
-	# 正常默认即可，为方便多人使用目录更短，我安装在/conda目录
+	# 正常默认安装即可(安装目录为`~/miniconda2`)，为方便多人使用目录更短，我安装在`/conda`目录
 	# 安装说明详见：[Nature Method：Bioconda解决生物软件安装的烦恼](https://mp.weixin.qq.com/s/SzJswztVB9rHVh3Ak7jpfA)
 	# 添加通道
 	conda config --add channels conda-forge
 	conda config --add channels bioconda
-#	# 添加清华镜像加速下载
-#	site=https://mirrors.tuna.tsinghua.edu.cn/anaconda
-#	conda config --add channels ${site}/pkgs/free/ 
-#	conda config --add channels ${site}/pkgs/main/
-#	conda config --add channels ${site}/cloud/conda-forge/
-#	conda config --add channels ${site}/pkgs/r/
-#	conda config --add channels ${site}/cloud/bioconda/
-#	conda config --add channels ${site}/cloud/msys2/
-#	conda config --add channels ${site}/cloud/menpo/
-#	conda config --add channels ${site}/cloud/pytorch/
+	# 添加清华镜像加速下载
+	site=https://mirrors.tuna.tsinghua.edu.cn/anaconda
+	conda config --add channels ${site}/pkgs/free/ 
+	conda config --add channels ${site}/pkgs/main/
+	conda config --add channels ${site}/cloud/conda-forge/
+	conda config --add channels ${site}/pkgs/r/
+	conda config --add channels ${site}/cloud/bioconda/
+	conda config --add channels ${site}/cloud/msys2/
+	conda config --add channels ${site}/cloud/menpo/
+	conda config --add channels ${site}/cloud/pytorch/
 
 
 ## 质控软件
 
-  # 质量评估软件fastqc
-  conda install fastqc # 0.11.8
-  # 多样品评估报告汇总multiqc
-  conda install multiqc # v1.6
-  
-  # 质量控制流程kneaddata
-  conda install kneaddata # v0.7.0
-  # 相关宿主索引布署，如人类、核糖体、拟南芥和水稻，请参考附录 KneadData
+	# 质量评估软件fastqc
+	conda install fastqc # 0.11.8
+	# 多样品评估报告汇总multiqc
+	conda install multiqc # v1.6
+
+	# 质量控制流程kneaddata
+	conda install kneaddata # v0.7.0
+	# 相关宿主索引布署，如人类、核糖体、拟南芥和水稻，请参考附录 KneadData
 
 
 ## 有参分析流程MetaPhlAn2、HUMAnN2
 
-  # 安装MetaPhlAn2、HUMAnN2和所有依赖关系
-  conda install humann2 # 0.11.1
-  # 测试流程是否可用
-  humann2_test
-  # 数据库布置见附录：HUMAnN2
-  
-  # metaphlan2输助脚本
-  conda install graphlan
-  conda install export2graphlan
-  # ImportError: libgfortran.so.1错误解决办法
-  conda install libgfortran==1
+	# 安装MetaPhlAn2、HUMAnN2和所有依赖关系
+	conda install humann2 # 0.11.1
+	# 测试流程是否可用
+	humann2_test
+	# 数据库布置见附录：HUMAnN2
 
-  
-  # 物种注释
-  # 基于LCA算法的物种注释kraken2  https://ccb.jhu.edu/software/kraken/
-  conda install kraken2 # 2.0.7_beta
-  # 下载数据库
-  kraken2-build --standard --threads 24 --db $db/kraken2
-  # 此步下载数据>50GB，下载时间由网速决定，索引时间4小时33分，多线程最快35min完成
-  # 标准模式下只下载5种数据库：古菌archaea、细菌bacteria、人类human、载体UniVec_Core、病毒viral
+	# metaphlan2输助脚本
+	conda install graphlan
+	conda install export2graphlan
+	# ImportError: libgfortran.so.1错误解决办法
+	conda install libgfortran==1
 
-  # 建Git安装，没有可以在网站上手动下载压缩包，再解压
-  # LangilleLab输助脚本 https://github.com/LangilleLab/microbiome_helper
-  git clone git@github.com:LangilleLab/microbiome_helper.git
-  # 我写的输助脚本 https://github.com/YongxinLiu/Metagenome
-  git git@github.com:YongxinLiu/Metagenome.git
-  # 添加环境变量，否则需要使用脚本所在的完整路径
-  # 添加目录至环境变量，注释修改位置
-  echo "export PATH=`pwd`/microbiome_helper:`pwd`/Metagenome/denovo1/script/:\$PATH" >> ~/.bashrc
+
+	# 物种注释
+	# 基于LCA算法的物种注释kraken2  https://ccb.jhu.edu/software/kraken/
+	conda install kraken2 # 2.0.7_beta
+	# 下载数据库
+	kraken2-build --standard --threads 24 --db $db/kraken2
+	# 此步下载数据>50GB，下载时间由网速决定，索引时间4小时33分，多线程最快35min完成
+	# 标准模式下只下载5种数据库：古菌archaea、细菌bacteria、人类human、载体UniVec_Core、病毒viral
+
+	# 建Git安装，没有可以在网站上手动下载压缩包，再解压
+	# LangilleLab输助脚本 https://github.com/LangilleLab/microbiome_helper
+	git clone git@github.com:LangilleLab/microbiome_helper.git
+	# 我写的输助脚本 https://github.com/YongxinLiu/Metagenome
+	git git@github.com:YongxinLiu/Metagenome.git
+	# 添加环境变量，否则需要使用脚本所在的完整路径
+	# 添加目录至环境变量，注释修改位置
+	echo "export PATH=`pwd`/microbiome_helper:`pwd`/Metagenome/denovo1/script/:\$PATH" >> ~/.bashrc
 
   # 自定义数据库，添加真菌
   cd $db

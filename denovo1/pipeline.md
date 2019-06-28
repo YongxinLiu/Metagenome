@@ -68,24 +68,26 @@ help:
 
 # 1. 有参分析流程 Reference-based pipeline
 
+	# 准备实验设计、测序数据和参数数据库
+	# Prepare experiment design (result/design.txt), sequecing data (seq/*.fq.gz) and database
 
 10init:
+
 	# 清理零字节文件重启项目 Clean zero-byte files, restart project
 	find . -name "*" -type f -size 0c | xargs -n 1 rm -f
 	# 建立程序必须目录 Create basic directory
 	mkdir -p seq temp result
 	touch $@
 
-	# 准备实验设计、测序数据和参数数据库
-	# Prepare experiment design (result/design.txt), sequecing data (seq/*.fq.gz) and database
-
 
 ## 1.1. 质控并移除宿主 Quality control & Remove host
 
-## 1.1.1 质量评估 Quality access
+### 1.1.1 质量评估 Quality access
 	
 	# 此步选做，一般原始序列合并时已经统计过数据量
+
 11qa: 10init
+
 	touch $@
 	# 质量评估 Quality access
 	time fastqc -t ${p1} seq/*1.fq.gz
@@ -93,9 +95,10 @@ help:
 	# 质量报告汇总
 	multiqc -d seq/ -o result/
 
-## 1.1.2 质控并移除宿主 Quality control & Remove host
+### 1.1.2 质控并移除宿主 Quality control & Remove host
 
 11qc: 10init
+
 	touch $@
 	mkdir -p temp/11qc
 	# 并行质控去宿主 kneaddata call trimmomatic quality control and bowtie2 remove host
@@ -106,13 +109,16 @@ help:
 		--bowtie2-options '--very-sensitive --dovetail' -db ${host_bt2}" \
 		::: `tail -n+2 result/design.txt | cut -f 1`
 	kneaddata_read_count_table --input temp/11qc --output temp/11kneaddata_stat.txt
-	cut -f 1,2,4,12 temp/11kneaddata_stat.txt | awk 'BEGIN{OFS=FS="\t"} {print $$0,$$3/$$2*100,$$4/$$3*100}' | sed 's/_1_kneaddata//' | sed '1 s/-nan/Hi-Q%/;s/-nan/rm_host%/' > result/11kneaddata_stat.txt
+	cut -f 1,2,4,12 temp/11kneaddata_stat.txt | awk 'BEGIN{OFS=FS="\t"} {print $$0,$$3/$$2*100,$$4/$$3*100}' \
+		| sed 's/_1_kneaddata//' | sed '1 s/-nan/Hi-Q%/;s/-nan/rm_host%/' > result/11kneaddata_stat.txt
 	cat result/11kneaddata_stat.txt
 
-## 1.13 提交数据准备 Submit clean data
+### 1.13 提交数据准备 Submit clean data
 
 	# 保存质控和去宿主后数据至seq/clean目录，连同保存宿主比例
+
 11gsa: 11qc
+
 	touch $@
 	mkdir -p submit
 	# hard link to clean
@@ -132,9 +138,10 @@ help:
 
 ## 1.2. 物种和功能组成定量 humann2
 
-### 1.2.1 humann2输入文件准备：双端文件cat连接
+### 1.2.1 humann2输入文件准备：双端文件cat合并
 
 12humann2_concat: 11qc
+
 	touch $@
 	# 生成humann2输入要求的合并文件 cat pair-end for humann2
 	mkdir -p temp/12concat
@@ -147,6 +154,7 @@ help:
 ### 1.2.2 humann2计算，包括metaphlan2
 
 12humann2: 12humann2_concat
+
 	touch $@
 	mkdir -p temp/12humann2
 	time parallel -j ${j} \
@@ -157,18 +165,19 @@ help:
 ### 1.2.3 功能组成整理 humann2_sum
 
 12humann2_sum: 12humann2
+
 	touch $@
 	mkdir -p result/12humann2
-	# 合并所有样品，通路包括各功能和具体的物种组成，还有基因家族(太多)，通路覆盖度层面可以进分析
-	humann2_join_tables --input temp/12humann2/ --file_name pathabundance --output result/12humann2/uniref.tsv
-	sed -i 's/_Abundance//g' result/12humann2/uniref.tsv
+	# 合并所有样品，通路丰度`pathabundance`包括各功能和具体的物种组成，还有基因家族`genefamilies`(太多)，通路覆盖度`pathcoverage`层面可以进分析
+	humann2_join_tables --input temp/12humann2/ --file_name pathabundance --output result/12humann2/pathabundance.tsv
+	sed -i 's/_Abundance//g' result/12humann2/pathabundance.tsv
 	# 标准化为相对丰度relab或百万分数cpm
-	humann2_renorm_table --input result/12humann2/uniref.tsv --units relab \
-		--output result/12humann2/uniref_relab.tsv
+	humann2_renorm_table --input result/12humann2/pathabundance.tsv --units relab \
+		--output result/12humann2/pathabundance_relab.tsv
 	# 分层结果，结果stratified(每个菌的功能组成)和unstratified(功能组成)两个
-	humann2_split_stratified_table --input result/12humann2/uniref_relab.tsv \
+	humann2_split_stratified_table --input result/12humann2/pathabundance_relab.tsv \
 		--output result/12humann2/
-	sed -i 's/# Pathway/MetaCyc_pathway/' result/12humann2/uniref_relab_*stratified.tsv
+	sed -i 's/# Pathway/MetaCyc_pathway/' result/12humann2/pathabundance_relab_*stratified.tsv
 
 
 ## 1.3. 整理物种组成表和基本绘图 Summary metaphlan2 and plot
@@ -176,6 +185,7 @@ help:
 ### 1.3.1 整理物种组成表 Summary metaphlan2
 
 13metaphaln2_sum: 12humann2_sum
+
 	touch $@
 	# metaphlan2功能组成
 	mkdir -p result/13metaphlan2

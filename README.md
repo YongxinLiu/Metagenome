@@ -23,9 +23,9 @@
 
 ### 1.2 FastQC质量评估(可选)
 
-## 1.3 序列质控和去宿主 Qaulity control and remove host contamination
+### 1.3 序列质控和去宿主 Qaulity control and remove host contamination
 
-# 1.4 质控后质量再评估 (可选)
+### 1.4 质控后质量再评估 (可选)
 
 ## 二、宏基因组有参分析流程 
 

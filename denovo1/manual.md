@@ -1,6 +1,10 @@
 	# 宏基因组分析流程第一版 —— 输助脚本
 	# Metagenome pipeline version 1 —— Assistant script
-
+	
+	# 加载目标环境变量
+	source /conda/bin/activate
+	# 启动宏基因组通用分析环境
+  conda activate meta
 
 
 # 1. 有参分析流程 Reference-based pipeline
@@ -9,24 +13,24 @@
 	# 0. 准备工作 Preparation
 
 	# 设置工作目录 Set work directory
-	# ath/2.5T ath/3T rice/miniCore rice/miniCore2 
-	wd=rice/miniCore
+	# ath/2.5T ath/3T rice/miniCore rice/miniCore2 medicago/metaLyr4
+	wd=medicago/metaLyr4
 	cd ~/$wd
 	
 	# 准备流程 Prepare makefile
 	ln -s /home/meta/soft/Metagenome/denovo1/parameter.md makefile
-	ln -s /home/meta/soft/Metagenome/denovo1/manual.md ./manual.sh
+	ln -s /home/meta/soft/Metagenome/denovo1/manual.md manual.sh
 	
 	# 建立初始工作目录 Create initial working directory
 	make 10init
 
 	# 准备原始数据 sequencing raw data (多样本合并和统计见附录1)
 	# 链接数据至工作目录
-	ln -s /mnt/m2/data/meta/$wd/seq/*.gz seq/
+	ln -s /mnt/m2/data/meta/$wd/*.gz seq/
 
 	# 准备实验设计上传到result目录，至少有两列样本名和组名 Experiment design
 	# 方法1. 数据来源处复制实验设计(推荐)
-	cp /mnt/m2/data/meta/rice/miniCore/metadata.txt result/metadata.txt
+	cp /mnt/m2/data/meta/$wd/metadata.txt result/metadata.txt
 	# 方法2. 复制实验设计模板并手动填写
 	# cp /home/meta/soft/Metagenome/denovo1/result/design.txt result/metadata.txt
 	# 方法3. 从样本名中提取，并手动补充
@@ -43,6 +47,7 @@
 	time make 11qc
 	# 结果见 result/11kneaddata_stat.txt 高质量、非宿主比例
 	# 时间较长，几小时到几天(~2d)，如异常中断的处理，见附录2. KneadData中断的手动继续
+	# 苜蓿150G数据，20h
 
 	### 1.1.3 提取上传的Clean数据
 	# 按GSA标准整理上传数据，见submit目录
@@ -53,7 +58,11 @@
 
 	## 1.2.1 humman2输入文件准备：双端文件cat连接
 	make 12humann2_concat
-
+  
+  # 启动humann2环境
+  conda activate metaRef
+  # 检查数据库位置
+	humann2_config --print
 	## 1.2.2 humman2计算，包括metaphlan2
 	make 12humann2
 	# 4.7 Tb水稻数据，8X12线程运行2.5 Days
@@ -61,7 +70,10 @@
 	## 1.2.3 功能组成整理 humman2_sum
 	make 12humann2_sum
 	# 结果见 result/12humann2目录，有功能通路及物种组成表uniref.tsv、标准化表uniref_relab.tsv，以及拆分功能表unstratified和功能物种对应表stratified
-
+	
+	# humann2转为KEGG
+  humann2_regroup_table -i temp/humann2/genefamilies.tsv \
+    -g uniref90_ko -o temp/humann2/ko.tsv
 
 ## 1.3. 整理物种组成表和基本绘图 Summary metaphlan2 and plot
 
@@ -102,6 +114,11 @@
 
 ## 2.2. Assemble 组装
 
+  # 启动组装环境
+  conda activate meta
+  megahit -v # MEGAHIT v1.2.9
+
+
 	# 方法1. 大项目推荐
 	### 2.2.0 基于qc质控序列单样本拼接(大项目)
 	make 22assemble_single
@@ -116,10 +133,17 @@
 	### 2.2.2 基于qc质控后序列拼接 (32p, 1.2d)
 	make 22megahit_all
 
+  # 报错，单样本测式
+ time megahit -t 48 \
+        -1 submit/lyr4B3R3_1.fq.gz \
+        -2 submit/lyr4B3R3_2.fq.gz \
+        -o temp/22megahit_all_test --continue
+        
 	### 2.2.3 megahit_all_quast评估
+	# 15m，3GB
 	make 22megahit_all_quast
 
-	### 2.2.4 Contig定量salmon()
+	### 2.2.4 Contig定量salmon
 	make 22megahit_all_salmon
 
 	### 2.2.5 Contig物种注释 kraken2 (可选，9p, 2m26s)
@@ -130,15 +154,17 @@
 
 	### 2.3.1 对单样品组装的每个contig文件基因注释(大数据可选)
 
-	make 23prokka_single
+	# make 23prodigal_all
 
 	### 2.3.2 对合并组装的单个contig文件基因注释(小样本可选)
+	# 3G，10h
+	make 23prodigal_all
 
-	make 23prokka_all
 
 	### 2.3.3 构建非冗余基集 Non-redundancy gene set(大数据可选)
 
 	# 90%覆盖度，95%相似度下，拼接结果再聚类基本不变少，如7736减少为7729
+	# 5,514,236聚类为4,879,276；72线程155m，8756m
 	make NRgeneSet
 
 
@@ -160,6 +186,64 @@ make kegg
 # 汇总为result/24kegg/kotab.count/tpm两个表，分别为原始count和rpm
 make kegg_sum
 
+
+# 3 分箱
+
+    conda activate metawrap-env
+    metawrap -v # 1.2.1
+    megahit -v # v1.1.3
+    metaspades.py -v # v3.13.0
+    
+## 3.1 混合分箱
+
+
+## 3.2 单样本分箱
+
+  # 样本名
+  i=R108B3R9
+  # 线程数
+  p=48
+  # 任务数
+  j=3
+  # 定义完整度和污染率的阈值(50, 5; Finn NBT 2020;50, 10, Bowers NBT 2017)
+  c=50
+  x=10
+  
+  for i in `cut -f 1 result/metadata.txt |tail -n+8`; do
+  # 解压改名，满足metawrap要求
+  gunzip -c submit/${i}_1.fq.gz > submit/${i}_1.fastq
+  gunzip -c submit/${i}_2.fq.gz > submit/${i}_2.fastq
+  # 单样本分箱2h
+  mkdir -p temp/binning
+  metawrap binning \
+      -o temp/binning/${i}\
+      -t ${p} \
+      -a temp/22megahit/${i}/final.contigs.fa \
+      --metabat2 --maxbin2 --concoct \
+      submit/${i}_*.fastq
+  # 单样本分箱提纯5h
+  mkdir -p temp/bin_refinement
+  metawrap bin_refinement \
+    -o temp/bin_refinement/${i} -t ${p} \
+    -A temp/binning/${i}/metabat2_bins/ \
+    -B temp/binning/${i}/maxbin2_bins/ \
+    -C temp/binning/${i}/concoct_bins/ \
+    -c ${c} -x ${x}
+  # 统计中、高质量bin的数量
+  mkdir -p result/32bin_single
+  echo -e $i"\t\c" >> result/32bin_single/medium.txt
+  tail -n+2 temp/bin_refinement/${i}/metawrap_50_10_bins.stats| awk '$2>=50 && $3<10'| wc -l >> result/32bin_single/medium.txt
+  echo -e $i"\t\c" >> result/32bin_single/high.txt
+  tail -n+2 temp/bin_refinement/${i}/metawrap_50_10_bins.stats| awk '$2>90 && $3<5'| wc -l >> result/32bin_single/high.txt    
+  done
+
+  # 显示结果
+  cat result/32bin_single/*.txt
+
+## 3.3 Drep去冗余
+
+
+## 3.4 物种注释和进化
 
 
 
@@ -294,7 +378,17 @@ awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$2]=$3"\t"$8} NR>FNR{print $0,a[$2]}' resfam_m
 
 
 
-# 附录2. 常用错误及处理
+# 附录2. 常用问题及处理
+
+
+## S2.1 多批数据合并基因集
+
+	# 手动运行 23prokka_single
+	cat temp/23prokka/*/mg.ffn temp/23prokka2/*/mg.ffn ../miniCore2/temp/23prokka/*/mg.ffn > temp/23prokka/mg.ffn # 19.7GB
+	mkdir -p temp/23NRgene
+	cp temp/23prokka/mg.ffn temp/23NRgene/
+	echo -ne 'Prokka single genes\t' > result/gene.log
+	grep -c '>' temp/23NRgene/mg.ffn >> result/gene.log
 
 
 

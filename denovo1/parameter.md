@@ -2,7 +2,8 @@ SHELL:=/bin/bash
 
 	# 宏基因组第一版流程配置文件，请根据项目具体情况修改 v1.1 2019/4/23
 	# Config file of Metagenome pipeline version 1, please modify according to experiment design
-
+  # v1.0 2019/4/23 建议标准流程
+  # v1.1 2020/12/28 开展测试完整流程
 
 # 1. 有参分析流程参数 Parameters of reference-based pipeline
 
@@ -10,9 +11,9 @@ SHELL:=/bin/bash
 	# 修改wd为当前工作目录pwd
 	wd=`pwd`
 	# 设置j最大运行任务/p线程数/p1非并行任务线程数，超过CPU数量效率反而会降低
-	j=5
-	p=8
-	p1=32
+	j=3
+	p=24
+	p1=72
 	# make init # 建立分析所需子目录
 	# 准备实验设计(result/design.txt)和测序数据(seq/*.fq.gz)和数据库(修改如下参数)
 
@@ -20,10 +21,10 @@ SHELL:=/bin/bash
 ## 1.1. qc 质控和去宿主
 	
 	# 质控软件trimmomatic安装目录
-	trimmomatic_path=/conda/share/trimmomatic-0.38-1/
-	# 宿主基因组bowtie2索引，如人human/Homo_sapiens, 拟南芥ath/水稻rice/水麦wheat/bt2
-	host_bt2=/db/host/human/Homo_sapiens
-
+	trimmomatic_path=/conda/share/trimmomatic/
+	# 宿主基因组bowtie2索引，如人human/Homo_sapiens, 拟南芥ath/水稻rice/水麦wheat/苜蓿med/bt2
+	host_bt2=/db/host/med/bt2
+  # 接头文件：通常cleandata已经去除接头，因无须指定接头文件。检查multiqc中Adapter Content 如有接头，则查找接头文件/conda/share/trimmomatic/adapters/中，手动指定参数，如 ILLUMINACLIP:/conda/share/trimmomatic/adapters/TruSeq2/3-PE.fa:2:40:15
 
 ## 1.2. 物种和功能组成定量 humman2
 
@@ -93,12 +94,11 @@ SHELL:=/bin/bash
 ### 2.4.1 eggNOG
 	
 	# 拆分行2000000，1M行
-	split_line=10000
+	# split_line=10000
 	# eggnog数据库位置 483m
-	eggnog_db=/mnt/zhou/yongxin/db/eggnog
-	# 复制数据库至内存22G，加速检索(前提内存足够大) cp /mnt/zhou/yongxin/db/eggnog/eggnog.db /dev/shm
-	# 
-	eggnog_mem=/dev/shm
+	eggnog_db=/home/meta/db/eggnog2
+	# 复制数据库至内存22G，加速检索(前提内存足够大) cp /home/meta/db/eggnog2 /dev/shm
+	# eggnog_db=/dev/shm
 
 ### 2.4.2 KEGG
 
@@ -109,17 +109,13 @@ SHELL:=/bin/bash
 ### 2.4.3 CAZyome 碳水化合物数据库
 
 	# http://cys.bios.niu.edu/dbCAN2/download/
-	dbcan2_dmnd=/mnt/zhou/yongxin/db/dbCAN2/CAZyDB.07312018
-	dbcan2_anno=/mnt/bai/yongxin/data/db/dbCAN2/fam_description.txt
+	dbcan2_dmnd=/db/protein/dbcan2/CAZyDB.07312018
+	dbcan2_anno=/db/protein/dbcan2/fam_description.txt
 
 ### 2.4.4 CAZyome 碳水化合物数据库
 
 	# http://www.dantaslab.org/resfams
 	resfams_dmnd=/mnt/zhou/yongxin/db/ResFams/Resfams-proteins
 	resfams_anno=/mnt/bai/yongxin/data/db/ResFams/Resfams-proteins_class.tsv
-
-
-
-
 
 include /home/meta/soft/Metagenome/denovo1/pipeline.md

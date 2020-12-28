@@ -47,9 +47,21 @@
 ## 有参分析流程MetaPhlAn2、HUMAnN2、Kraken2
 
 	# 安装MetaPhlAn2、HUMAnN2和所有依赖关系
-	conda install humann2 # 0.11.1
+	# conda install -c bioconda humann2
+	conda create -n humann2 humann2 -c bioconda # 2.8.1 
+	# conda install humann2 # 0.11.1
+	# 2019/09/19更新 # 2.8.1 https://anaconda.org/bioconda/humann2
+  # humann2-2.8.1        | 61.0 MB
+  # samtools-1.9         | 299 KB 
+  # bcftools-1.9         | 813 KB 
+  # metaphlan2-2.6.0     | 46 KB  
+  # biom-format-2.1.7    | 10.6 MB
+  # bowtie2-2.3.4.3      | 13.7 MB
+  # diamond-0.8.36       | 497 KB 
+
+
 	# 测试流程是否可用
-	humann2_test
+	humann2_test # Ran 185 tests in 146.291s OK
 	# 数据库布置见附录：HUMAnN2
 
 	# metaphlan2输助脚本
@@ -147,13 +159,16 @@
 
 # 附录 Appendix
 
+  db=/db
+  cd $db
+
 ## 核糖体数据库
 
 	mkdir -p $db/rDNA
 
 ### Greengene
 
-greengene13.5 下载地址：ftp://greengenes.microbio.me/greengenes_release/gg_13_5/gg_13_5_otus.tar.gz
+  # greengene13.5 下载地址：ftp://greengenes.microbio.me/greengenes_release/gg_13_5/gg_13_5_otus.tar.gz
 
 	mkdir -p $db/rDNA/gg && cd $db/rDNA/gg
 	wget ftp://greengenes.microbio.me/greengenes_release/gg_13_5/gg_13_5_otus.tar.gz
@@ -232,29 +247,69 @@ usearch提供gg13.5, rdpv16和silva123序列和物种注释文件
 	mv Triticum_aestivum.IWGSC.dna.toplevel.fa tae.fa
 	bowtie2-build --threads 9 tae.fa bt2 # 1h41m
 
+### 苜蓿基因组
+  
+  # R108测序只有1.0版，目前最好的是A17 4.0 https://www.ncbi.nlm.nih.gov/assembly/GCF_000219495.3 点RefSeq download
+	mkdir -p $db/host/med
+	cd $db/host/med
+	# 下载时间：2019/9/19，文件修改时间：2016/10/18
+	wget -c ftp://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/000/219/495/GCA_000219495.2_MedtrA17_4.0/GCA_000219495.2_MedtrA17_4.0_genomic.fna.gz 
+	gunzip GCA_000219495.2_MedtrA17_4.0_genomic.fna.gz 
+	mv GCA_000219495.2_MedtrA17_4.0_genomic.fna MedtrA17_4.fa
+	bowtie2-build --threads 9 MedtrA17_4.fa bt2 # 5m
+
 
 ## HUMAnN2有参流程
 
 	humann2_databases # 显示可用数据库
-	wd=$db/humann2
+	wd=/db/humann2
 	mkdir -p $wd # 建立下载目录
+	cd $wd
 	# 蛋白注释库 0.58G
 	humann2_databases --download utility_mapping full $wd 
 	# 微生物泛基因组数据库 5.37G
 	humann2_databases --download chocophlan full $wd 
 	# 非冗余功能基因diamond索引 10.3G
 	humann2_databases --download uniref uniref90_diamond $wd
+	
+  # 	# 手动下载最新版 http://huttenhower.sph.harvard.edu/humann2_data
+  # 	wd=/db/humann2v201901
+  # 	mkdir -p $wd
+  # 	cd $wd
+  # 	# 解压前备份至 humann2v201901/ 为 humann2v201901_bak/
+  # 	# 201901版泛基因组数据库 5 to 15G
+  #   wget -c http://huttenhower.sph.harvard.edu/humann2_data/chocophlan/full_chocophlan.v201901.tar.gz
+  #   mkdir -p chocophlan
+  #   tar xvzf full_chocophlan.v201901.tar.gz -C chocophlan
+  # 	# 201901非冗余功能基因diamond索引 10 to 20G
+  #   wget -c http://huttenhower.sph.harvard.edu/humann2_data/uniprot/uniref_annotated/uniref90_annotated_v201901.tar.gz
+  #   mkdir -p uniref90
+  #   # 解压20G为34G，用时20m
+  #   time tar xvzf uniref90_annotated_v201901.tar.gz -C uniref90
+  #   # 可选小内存使用uniref50，只从2.7 to 6.9 G
+  # 	wget -c http://huttenhower.sph.harvard.edu/humann2_data/uniprot/uniref_annotated/uniref50_annotated_v201901.tar.gz
+  #   mkdir -p uniref50
+  #   tar xvzf uniref50_annotated_v201901.tar.gz -C uniref50
+	# 1万条数据测试新数据库
+  # head -n 4000000 temp/12concat/lyr4B3R2.fq > temp/temp.fq
+  # time humann2 --input temp/temp.fq --output temp/12humann2/
+  # 201901数据库不兼容，还在开发中... Error: Incompatible database versio
+
+
 	# 设置数据库位置和线程数
+	# 复制 cp -r ../humann2/utility_mapping ./
 	humann2_config --update database_folders utility_mapping $wd/utility_mapping
 	humann2_config --update database_folders protein $wd/uniref
 	humann2_config --update database_folders nucleotide $wd/chocophlan
-	humann2_config --update run_modes threads 8
+	humann2_config --update run_modes threads 24
 	# 显示参数
 	humann2_config --print
 	# metaphlan2数据库默认位于程序所在目录的db_v20和databases下各一份，备用文件见/db/humann2/metaphlan2/
-	ln /db/humann2/metaphlan2/ /conda/bin/db_v20 -s # The database file for MetaPhlAn does not exist at /conda/bin/db_v20/mpa_v20_m200.pkl . Please provide the location with --metaphlan-options .
-	ln /db/humann2/metaphlan2/ /conda/bin/databases -s # ERROR: Unable to create folder for database install: /conda/bin/databases
+	# # The database file for MetaPhlAn does not exist at /conda/bin/db_v20/mpa_v20_m200.pkl . Please provide the location with --metaphlan-options .
+	ln /db/humann2/metaphlan2/ /conda/bin/db_v20 -s 
+	# ERROR: Unable to create folder for database install: /conda/bin/databases
 	# --metaphlan-options '--mpa_pkl ''
+	ln /db/humann2/metaphlan2/ /conda/bin/databases -s 
 
 ## 基因功能注释
 

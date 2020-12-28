@@ -69,7 +69,7 @@ help:
 # 1. 有参分析流程 Reference-based pipeline
 
 	# 准备实验设计、测序数据和参数数据库
-	# Prepare experiment design (result/design.txt), sequecing data (seq/*.fq.gz) and database
+	# Prepare experiment design (result/metadata.txt), sequecing data (seq/*.fq.gz) and database
 
 10init:
 
@@ -105,9 +105,9 @@ help:
 	time parallel --xapply -j ${j} \
 		"kneaddata -i seq/{1}_1.fq.gz -i seq/{1}_2.fq.gz \
 		-o temp/11qc -v -t ${p} --remove-intermediate-output \
-		--trimmomatic ${trimmomatic_path} --trimmomatic-options 'SLIDINGWINDOW:4:20 MINLEN:50' \
+		--trimmomatic ${trimmomatic_path} --trimmomatic-options 'SLIDINGWINDOW:4:20 MINLEN:100' \
 		--bowtie2-options '--very-sensitive --dovetail' -db ${host_bt2}" \
-		::: `tail -n+2 result/design.txt | cut -f 1`
+		::: `tail -n+2 result/metadata.txt | cut -f 1`
 	kneaddata_read_count_table --input temp/11qc --output temp/11kneaddata_stat.txt
 	cut -f 1,2,4,12 temp/11kneaddata_stat.txt | awk 'BEGIN{OFS=FS="\t"} {print $$0,$$3/$$2*100,$$4/$$3*100}' \
 		| sed 's/_1_kneaddata//' | sed '1 s/-nan/Hi-Q%/;s/-nan/rm_host%/' > result/11kneaddata_stat.txt
@@ -128,7 +128,7 @@ help:
 	# compress for reducing space
 	pigz submit/*
 	ln result/11kneaddata_stat.txt submit/stat.txt
-	ln result/design.txt submit/metadata.txt
+	ln result/metadata.txt submit/metadata.txt
 	md5sum submit/*_1.fq.gz > submit/md5sum1.txt
 	md5sum submit/*_2.fq.gz > submit/md5sum2.txt
 	paste submit/md5sum1.txt submit/md5sum2.txt | awk '{print $2"\t"$1"\t"$4"\t"$3}' > submit/md5sum.txt
@@ -191,9 +191,9 @@ help:
 	mkdir -p result/13metaphlan2
 	# 合并单样品为表
 	merge_metaphlan_tables.py temp/12humann2/*_humann2_temp/*_metaphlan_bugs_list.tsv | \
-		sed 's/_metaphlan_bugs_list//g' > result/13metaphlan2/taxonomy.tsv
+		sed 's/_metaphlan_bugs_list//g' | sed '/^#/d' > result/13metaphlan2/taxonomy.tsv
 	# 转换为stamp的多级格式，株水不完整，不去掉列无法对齐
-	metaphlan_to_stamp.pl result/13metaphlan2/taxonomy.tsv | grep -v 't__' > result/13metaphlan2/taxonomy.spf
+	metaphlan_to_stamp.pl result/13metaphlan2/taxonomy.tsv > result/13metaphlan2/taxonomy.spf
 	# 绘制热图
 	metaphlan_hclust_heatmap.py --in result/13metaphlan2/taxonomy.tsv \
 		--out result/13metaphlan2/taxonomy_heatmap_top.pdf \
@@ -342,10 +342,11 @@ endif
 	touch $@
 	# 采用metahit拼接所有样本，理论上双端序列文件大小完全相关，为何有差异
 	# rm -rf temp/22megahit_all
-	time megahit -t ${p1} --k-min ${kmin} --k-max ${kmax} --k-step ${kstep} \
+	# --k-min ${kmin} --k-max ${kmax} --k-step ${kstep} 
+	time megahit -t ${p1} \
 		-1 `ls temp/11qc/*_paired_1.fastq|tr '\n' ','|sed 's/,$$//'` \
 		-2 `ls temp/11qc/*_paired_2.fastq|tr '\n' ','|sed 's/,$$//'` \
-		-o temp/22megahit_all
+		-o temp/22megahit_all --continue
 
 ## 2.2.3 megahit_all_quast评估
 
@@ -388,6 +389,27 @@ endif
 
 
 ## 2.3. Gene annotation 基因注释
+
+
+### 2.3.2 对合并组装的单个contig文件基因注释
+
+23prodigal_all: 22megahit_all
+	touch $@
+	mkdir -p temp/23prodigal_all
+	time prodigal -i temp/22megahit_all/final.contigs.fa -d temp/23prodigal_all/gene.fa  \
+	  -o temp/23prodigal_all/gene.gff -p meta -f gff \
+	  > temp/23prodigal_all/gene.log 2>&1 
+
+23prodigal_all_sum: 23prodigal_all
+	touch $@
+	ls -lsh temp/23prodigal_all/gene.fa
+	echo -ne 'metaProdigal all genes\t' > result/gene.log
+	grep -c '>' temp/23prodigal_all/gene.fa>> result/gene.log
+	cat result/gene.log
+	# link to NR
+	mkdir -p temp/23NRgene
+	rm -rf temp/23NRgene/gene.fa
+	ln temp/23prodigal_all/gene.fa temp/23NRgene/gene.fa
 
 ### 2.3.1 对单样品组装的每个contig文件基因注释(大数据可选)
 
@@ -441,18 +463,16 @@ endif
 
 23NRgeneSet: 
 	touch $@
-	# -c  sequence identity threshold, default 0.9; -M  max available memory (Mbyte), default 400; -l  length of throw_away_sequences, default 10
-	cd-hit-est -i temp/23NRgene/mg.ffn -o temp/23NRgene/mg.ffn.nr -aS ${cdhit_coverage} -c ${cdhit_similarity} -G 0 -M ${cdhit_mem} -T ${p1} -n 10 -d 0 -g 1
+	# -c sequence identity threshold, default 0.9; -M  max available memory (Mbyte), default 400; -l  length of throw_away_sequences, default 10
+	time cd-hit-est -i temp/23NRgene/gene.fa -o temp/23NRgene/NRgene.fa -aS ${cdhit_coverage} -c ${cdhit_similarity} -G 0 -g 0 -M ${cdhit_mem} -T ${p1} # -n 10 -d 0 -g 1
 	# 统计基因数据，确定ID是否非冗余
 	echo -ne 'NRgeneSet\t' >> result/gene.log
-	grep -c '>' temp/23NRgene/mg.ffn.nr >> result/gene.log
+	grep -c '>' temp/23NRgene/NRgene.fa >> result/gene.log
 	cat result/gene.log
-	## protein level
-	#cat temp/23prokka/*/mg.faa > temp/23NRgene/mg.faa
-	#grep -c '>' temp/23NRgene/mg.faa
-	## aS覆盖度, c相似度, n字长，G本地，M内存，-d描述字长，r准确慢模式
-	#cd-hit -i temp/23NRgene/mg.faa -o temp/23NRgene/mg.faa.nr -aS 0.9 -c 0.95 -G 0 -M ${cdhit_mem} -T ${p1} -n 5 -d 0 -g 1
-	#grep -c '>' temp/23NRgene/mg.faa.nr
+	# 翻译核酸为对应蛋白序列， emboss
+	transeq -sequence temp/23NRgene/NRgene.fa -outseq temp/23NRgene/protein.fa -trim Y 
+	# 序列名自动添加了_1，为与核酸对应要去除
+	sed -i 's/_1 / /' temp/23NRgene/protein.fa
 
 ### 2.3.4 基因定量 salmon genes
 
@@ -461,8 +481,8 @@ endif
 	mkdir -p temp/23salmon_gene
 	# 1. 建索引
 	# -t 转录本序列，--type 类型fmd/quasi，-k kmer长度默认31, -i 索引
-	salmon index -t temp/23NRgene/mg.ffn.nr -p ${p} \
-		-i temp/23salmon_gene/index --type quasi -k ${salmon_kmer}
+	salmon index -t temp/23NRgene/NRgene.fa -p ${p} \
+		-i temp/23salmon_gene/index # --type quasi -k ${salmon_kmer}
 	# 2. 定量
 	parallel -j ${j} \
 		'salmon quant -i temp/23salmon_gene/index -l A -p ${p} --meta \
@@ -477,9 +497,9 @@ endif
 
 ### 2.3.5 基因物种注释 kraken2 annotate gene(可选)
 
-kraken2_gene: salmon_gene
+23kraken2_gene: 23salmon_gene
 	touch $@
-	kraken2 --db ${kraken2_db} temp/23prokka_all/mg.ffn \
+	kraken2 --db ${kraken2_db} temp/23NRgene/mg.ffn.nr \
 	--threads ${p} --use-names \
 	--output result/23salmon_gene/kraken2.tax
 
@@ -488,88 +508,109 @@ kraken2_gene: salmon_gene
 
 ### 2.4.1 eggNOG
 
-eggnog: 
+24eggnog: 23NRgeneSet
 	touch $@
 	mkdir -p temp/24eggnog
-	# 单行fasta容易分割 format faa into single line fasta; 21s
-	format_fasta_1line.pl -i temp/23prokka_all/mg.faa -o temp/24eggnog/input.faa 
-	# 按1M行分割  -l按行数分割，-a后缀宽度3位，默认2位；-d数据后缀; 2s
-	time split -l ${split_line} -a 3 -d temp/24eggnog/input.faa temp/24eggnog/input.chunk_
-	# 并行diamond比对, test 24m, 
-	time parallel --xapply -j ${j} \
-		'emapper.py -m diamond --no_annot --no_file_comments --data_dir ${eggnog_db} --cpu ${p} -i {1} -o {1}' \
-		::: temp/24eggnog/input.chunk*
-	# 合并比对结果 merge all blast result
-	cat temp/24eggnog/input.chunk_*.emapper.seed_orthologs > temp/24eggnog/input_file.emapper.seed_orthologs
-	# 注释 annotate blast result, test 14s, 200G 29m
-	time emapper.py --annotate_hits_table temp/24eggnog/input_file.emapper.seed_orthologs --no_file_comments \
-		-o temp/24eggnog/output_file --cpu ${p1} --data_dir ${eggnog_mem} --override
+	# diamond比对基因至eggNOG数据库
+	time emapper.py -m diamond --no_annot --no_file_comments \
+	  --data_dir ${eggnog_db} --cpu ${p1} -i temp/23NRgene/protein.fa \
+	  -o temp/24eggnog/protein --override
+	# 比对结果功能注释
+	time emapper.py --annotate_hits_table \
+	  temp/24eggnog/protein.emapper.seed_orthologs --no_file_comments \
+	  -o temp/24eggnog/output --cpu ${p1} --data_dir ${eggnog_db} --override
 
-eggnog_sum: eggnog
+
+24eggnog_sum: 24eggnog
+
 	touch $@
-	mkdir -p result/24eggnog
-	# 添加表头 Add header
-	sed '1 i Name\teggNOG\tEvalue\tScore\tGeneName\tGO\tKO\tBiGG\tTax\tOG\tBestOG\tCOG\tAnnotation' temp/24eggnog/output_file.emapper.annotations > temp/24eggnog/output_file
-	# 重点1序列名，7KO，12COG分类，13注释
+# 	mkdir -p result/24eggnog
+# 	# 添加表头 Add header
+# 	sed '1 i Name\tortholog\tevalue\tscore\ttaxonomic\tprotein\tGO\tEC\tKO\tPathway\tModule\tReaction\trclass\tBRITE\tTC\tCAZy\tBiGG\ttax_scope\tOG\tbestOG\tCOG\tdescription' temp/24eggnog/output.emapper.annotations > temp/24eggnog/output
+#   # 合并
+#   /conda/envs/humann3/bin/python /mnt/m1/yongxin/bin/summarizeAbundance.py \
+#     -i result/salmon/gene.TPM \
+#     -m temp/eggnog/output \
+#     -c '9,16,21' -s ',+,+*' -n raw \
+#     -o result/eggnog/eggnog
+#   # eggnog.CAZy.raw.txt  eggnog.COG.raw.txt  eggnog.KO.raw.txt
+#   # STAMP的spf格式，结合metadata.tsv进行COG/KO/Description差异比较
+#   # KO
+#   sed -i 's/^ko://' result/eggnog/eggnog.KO.raw.txt
+#   awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$1]=$2} NR>FNR{print a[$1],$0}' \
+#     ${db}/eggnog/KO.anno \
+#     result/eggnog/eggnog.KO.raw.txt| \
+#     sed 's/^\t/Description\t/' > result/eggnog/eggnog.KO.TPM.spf
+#   # CAZy
+#   awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$1]=$2} NR>FNR{print a[$1],$0}' \
+#      ${db}/dbcan2/fam_description.txt result/eggnog/eggnog.CAZy.raw.txt | \
+#     sed 's/^\t/Description\t/' > result/eggnog/eggnog.CAZy.TPM.spf
+#   # COG
+#   awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$1]=$2"\t"$3} NR>FNR{print a[$1],$0}' \
+#     ${db}/eggnog/COG.anno \
+#     result/eggnog/eggnog.COG.raw.txt | sed '1 s/^/Level1\tLevel2/'> \
+#     result/eggnog/eggnog.COG.TPM.spf
 
-	# 1. KO注释表
-	# 提取基因KO表，基因1对多个KO时只提取第一个KO
-	cut -f 1,7 temp/24eggnog/output_file|cut -f 1 -d ','|grep -v -P '\t$$' > temp/24eggnog/1ko.list #|less -S
-	wc -l temp/24eggnog/1ko.list # 3971基因有KO注释，只比KEGG_76的4288略低
-	# 基因丰度矩阵末尾添加对应KO编号，没注释的直接删除，可选注释为unclassified
-	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print $$0,a[$$1]}' temp/24eggnog/1ko.list result/23salmon_gene/gene.count | \
-		sed '/\t$$/d' > temp/24eggnog/gene_ko.count
-	# 检查注释前后基因数量
-	wc -l result/23salmon_gene/gene.count 
-#	wc -l temp/24eggnog/gene_ko.count
-	# 合并基因表为KO表，输出count值和tpm值
-	Rscript ~/github/Metagenome/denovo1/script/mat_gene2ko.R -i temp/24eggnog/gene_ko.count -o result/24eggnog/kotab -n ${unit}
-	# KO对应的描述
-	# awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print $$0,a[$$1]}' /db/kegg/ko_description.txt result/24eggnog/kotab.count > result/24eggnog/kotab.count.anno
-	# STAMP的spf格式，结果metadata.txt进行KO或Description差异比较
-	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print a[$$1],$$0}' /db/kegg/ko_description.txt result/24eggnog/kotab.count | sed 's/^\t/Undescription\t/' > result/24eggnog/kotab.count.spf
+	# # 重点1序列名，7KO，12COG分类，13注释
 
-	# 2. COG注释表
-	# 提取12列COG分类注释
-	cut -f 1,12 temp/24eggnog/output_file|cut -f 1 -d ','|grep -v -P '\t$$' > temp/24eggnog/1cog.list #|less -S
-	# 检查注释前后基因数量
-	wc -l result/23salmon_gene/gene.count 
-	wc -l temp/24eggnog/1cog.list # 5175基因有cog注释，远高于KEGG_76的4288
-	# 基因丰度矩阵末尾添加对应cog编号，没注释的直接删除，可选注释为unclassified
-	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print $$0,a[$$1]}' temp/24eggnog/1cog.list result/23salmon_gene/gene.count | \
-		sed '/\t$$/d' > temp/24eggnog/gene_cog.count
-	# 合并基因表为cog表，输出count值和tpm值
-	sed -i '1 s/\tCOG/\tKO/' temp/24eggnog/gene_cog.count
-	Rscript ~/github/Metagenome/denovo1/script/mat_gene2ko.R -i temp/24eggnog/gene_cog.count -o result/24eggnog/cogtab -n ${unit}
-	# cog对应的描述，STAMP的spf格式，结果metadata.txt进行cog或Description差异比较
-	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2"\t"$$3} NR>FNR{print a[$$1],$$0}' /mnt/zhou/yongxin/db/eggnog/COG_one_letter_code_descriptions.tsv result/24eggnog/cogtab.count | sed 's/^\t/Undescription\t/' > result/24eggnog/cogtab.count.spf
-	# 添加整理柱状图，和分组柱状图
+	# # 1. KO注释表
+	# # 提取基因KO表，基因1对多个KO时只提取第一个KO
+	# cut -f 1,7 temp/24eggnog/output|cut -f 1 -d ','|grep -v -P '\t$$' > temp/24eggnog/1ko.list
+	# # 基因丰度矩阵末尾添加对应KO编号，没注释的直接删除，可选注释为unclassified
+	# awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print $$0,a[$$1]}' temp/24eggnog/1ko.list result/23salmon_gene/gene.count | \
+	# 	sed '/\t$$/d' > temp/24eggnog/gene_ko.count
+	# # 检查注释前后基因数量，2.6M，1M
+	# wc -l result/23salmon_gene/gene.count 
+	# # KO可注释基因数量
+	# wc -l temp/24eggnog/gene_ko.count
+	# # 合并基因表为KO表，输出count值和tpm值
+	# time Rscript /home/meta/soft/Metagenome/denovo1/script/mat_gene2ko.R -i temp/24eggnog/gene_ko.count -o result/24eggnog/kotab -n ${unit}
+	# # KO的数量
+	# wc -l result/24eggnog/kotab.count
+	# # 添加来自KEGG整理的KO对应的描述
+	# # awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print $$0,a[$$1]}' /db/eggnog/KO.anno result/24eggnog/kotab.count > result/24eggnog/kotab.count.anno
+	# # STAMP的spf格式，结果metadata.txt进行KO或Description差异比较
+	# awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print a[$$1],$$0}' /db/eggnog/KO.anno result/24eggnog/kotab.count | sed 's/^\t/Undescription\t/' > result/24eggnog/kotab.count.spf
+	# 
+	# # 2. COG注释表
+	# # 提取12列COG分类注释
+	# cut -f 1,12 temp/24eggnog/output_file|cut -f 1 -d ','|grep -v -P '\t$$' > temp/24eggnog/1cog.list
+	# # 检查注释前后基因数量，2.6M基因，1.6M基因有cog注释，远高于KEGG的1M
+	# wc -l temp/24eggnog/1cog.list
+	# # 基因丰度矩阵末尾添加对应cog编号，没注释的直接删除，可选注释为unclassified
+	# awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print $$0,a[$$1]}' temp/24eggnog/1cog.list result/23salmon_gene/gene.count | \
+	# 	sed '/\t$$/d' > temp/24eggnog/gene_cog.count
+	# # 合并基因表为cog表，输出count值和tpm值
+	# sed -i '1 s/\tCOG/\tKO/' temp/24eggnog/gene_cog.count
+	# # 文件1.6M行，36列，按组合并2min
+	# cat temp/24eggnog/gene_cog.count | datamash check
+	# time Rscript /home/meta/soft/Metagenome/denovo1/script/mat_gene2ko.R -i temp/24eggnog/gene_cog.count -o result/24eggnog/cogtab -n ${unit}
+	# # cog对应的描述，STAMP的spf格式，结合metadata.txt进行cog或Description差异比较
+	# awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2"\t"$$3} NR>FNR{print a[$$1],$$0}' /db/eggnog/COG.anno result/24eggnog/cogtab.count | sed 's/^\t/Undescription\t/' > result/24eggnog/cogtab.count.spf
+	# # 添加整理柱状图，和分组柱状图绘制
+	# 
+	# # 3. 基因功能描述
+	# # 提取基因anno分类表，基因1对多个anno时只提取第一个anno
+	# cut -f 1,13 temp/24eggnog/output_file|cut -f 1 -d ','|grep -v -P '\t$$' > temp/24eggnog/3anno.list
+	# # 1.6M的功能注释，远高于KEGG的1M
+	# wc -l temp/24eggnog/3anno.list
+	# # anno对应的描述，STAMP的spf格式，没注释的基因删除，结合metadata.txt进行anno或Description差异比较
+	# # 可选sed将末注释归类为Undescription sed 's/^\t/Undescription\t/'
+	# awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print a[$$1],$$0}' temp/24eggnog/3anno.list result/23salmon_gene/gene.count | grep -v -P '^\t' > result/24eggnog/annotab.count.spf
 
-	# 3. 基因功能描述
-	# 提取基因anno分类表，基因1对多个anno时只提取第一个anno
-	cut -f 1,13 temp/24eggnog/output_file|cut -f 1 -d ','|grep -v -P '\t$$' > temp/24eggnog/3anno.list
-	wc -l temp/24eggnog/3anno.list # 5173基因有anno注释，远高于KEGG_76的4288
-	# anno对应的描述，STAMP的spf格式，没注释的基因删除，结果metadata.txt进行anno或Description差异比较
-	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print a[$$1],$$0}' temp/24eggnog/3anno.list result/23salmon_gene/gene.count | grep -v -P '^\t' > result/24eggnog/annotab.count.spf # sed 's/^\t/Undescription\t/'
-	#	# 添加COG分类
-	#	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2} NR>FNR{print a[$$2],$$0}' temp/24eggnog/1cog.list result/24eggnog/annotab.count.spf > temp/24eggnog/cogannotab.count.spf # | sed 's/^\t/Undescription\t/'
-	#	sed -i '1 s/COG/ID/' temp/24eggnog/cogannotab.count.spf
-	#	# 添加COG对应的描述，STAMP的spf格式，结果metadata.txt进行cog或Description差异比较，非严格层级，stamp无法打开
-	#	awk 'BEGIN{FS=OFS="\t"} NR==FNR{a[$$1]=$$2"\t"$$3} NR>FNR{print a[$$1],$$0}' /mnt/zhou/yongxin/db/eggnog/COG_one_letter_code_descriptions.tsv temp/24eggnog/cogannotab.count.spf > result/24eggnog/cogannotab.count.spf # | sed 's/^\t/Undescription\t/'
 
+### 2.4.2 KEGG(数据库无版权，请跳过)
 
-### 2.4.2 KEGG
-
-kegg: kraken2_gene
+24kegg: 23NRgeneSet
 	touch $@
 	mkdir -p temp/24kegg
-	# --outfmt 6, BLAST tabular;
-	diamond blastp --db ${kegg_dmnd} --query temp/23prokka_all/mg.faa \
+	# 2.6 M genes, 8 threads, spend 6h
+	time diamond blastp --db ${kegg_dmnd} --query temp/23NRgene/protein.fa \
 		--outfmt 6 --threads ${p} --max-target-seqs 1 --quiet \
 		--out temp/24kegg/gene_diamond.f6
 
-kegg_sum: kegg
-#	touch $@
+24kegg_sum: 24kegg
+	touch $@
 	mkdir -p result/24kegg
 	# 提取基因ID(Name)和KEGG基因ID(KgeneID)
 	cut -f 1,2 temp/24kegg/gene_diamond.f6 | uniq | sed '1 i Name\tKgeneID' > temp/24kegg/gene_kegg.list
@@ -591,14 +632,15 @@ kegg_sum: kegg
 
 ### 2.4.3 CAZyome 碳水化合物数据库
 
-dbcan2: eggnog_sum
+24dbcan2: 23NRgeneSet
 	touch $@
 	mkdir -p temp/24dbcan2
-	diamond blastp --db ${dbcan2_dmnd} --query temp/23prokka_all/mg.faa \
+	# 2.6M genes, 8 threads, 30min
+	time diamond blastp --db ${dbcan2_dmnd} --query temp/23NRgene/protein.fa \
 		--outfmt 6 --threads ${p} --max-target-seqs 1 --quiet \
 		--out temp/24dbcan2/gene_diamond.f6
 
-dbcan2_sum: dbcan2
+24dbcan2_sum: 24dbcan2
 	mkdir -p result/24dbcan2
 	# 提取基因对应基因家族，同一基因存在1对多，只取第一个
 	cut -f 1,2 temp/24dbcan2/gene_diamond.f6 | uniq | sed 's/|/\t/g' | cut -f 1,3 | \
@@ -645,4 +687,29 @@ resfams_sum: resfams
 
 # 3. 宏基因组分箱 Binning
 
-## 3.1 
+## 3.1 混合分箱
+
+binning:
+	touch $@
+	metawrap binning \
+		-o temp/binning \
+		-t ${p} \
+		-a temp/megahit/final_assembly.fasta \
+		--metabat2 --maxbin2 --concoct \
+		seq/*.fastq
+
+
+## 3.2 单样本分箱
+
+binning_single: 
+	touch $@
+	metawrap binning \
+		-o temp/binning \
+		-t ${p} \
+		-a temp/megahit/final_assembly.fasta \
+		--metabat2 --maxbin2 --concoct \
+		seq/*.fastq
+	parallel --xapply -j ${j} \
+		"cat temp/11qc/{1}*data_paired* > temp/12concat/{1}.fq" \
+		::: `tail -n+2 result/metadata.txt | cut -f 1`
+

@@ -1,7 +1,7 @@
 # 宏基因组软件和数据库安装
 
-	# 测试环境为 Ubuntu 18.04.2 LTS (GNU/Linux 4.15.0-51-generic x86_64)、 CentOS Linux release 7.3.1611 (Core)
-	# Ubuntu登陆时默认显示系统版本，可用`cat /etc/issue`命令查看；CentOS使用`cat /etc/redhat-release`查看系统版本
+	# 测试环境为 Ubuntu 16/18.04 LTS / CentOS 7.3
+	# Ubuntu登陆时显示系统版本，可用`cat /etc/issue`命令查看；CentOS用`cat /etc/redhat-release`查看
 
 	# 设置数据库存放位置，如`~/db`目录，务必存于自己有权限的位置
 	# 本此设置为`/db`根目录下，方便多人使用，需要管理员权限
@@ -12,7 +12,7 @@
 ## 软件管理器miniconda2
 
 	cd 
-	mkdir -p soft && cd soft
+	mkdir -p software && cd software
 	wget -c https://repo.continuum.io/miniconda/Miniconda2-latest-Linux-x86_64.sh
 	bash Miniconda2-latest-Linux-x86_64.sh
 	# 正常默认安装即可(安装目录为`~/miniconda2`)，为方便多人使用目录更短，我安装在`/conda`目录
@@ -34,39 +34,38 @@
 
 ## 质控软件
 
+	# 新建环境
+	conda create -n meta
+	conda activate meta
+	# 序列处理
+	conda install seqkit
+	# 表格处理
+	conda install csvtk
+	# 直接下载最新版 https://github.com/shenwei356/csvtk/releases
+	wget -c https://github.com/shenwei356/csvtk/releases/download/v0.22.0/csvtk_linux_amd64.tar.gz
+	tar xvzf csvtk_linux_amd64.tar.gz
+	cp csvtk ~/miniconda3/bin/
 	# 质量评估软件fastqc
-	conda install fastqc # 0.11.8
+	conda install fastqc # 0.11.9
 	# 多样品评估报告汇总multiqc
-	conda install multiqc # v1.6
-
+	conda install multiqc # v1.8
 	# 质量控制流程kneaddata
-	conda install kneaddata # v0.7.0
+	conda install kneaddata # v0.7.4
 	# 相关宿主索引布署，如人类、核糖体、拟南芥和水稻，请参考附录 KneadData
 
 
 ## 有参分析流程MetaPhlAn2、HUMAnN2、Kraken2
 
 	# 安装MetaPhlAn2、HUMAnN2和所有依赖关系
-	# conda install -c bioconda humann2
 	conda create -n humann2 humann2 -c bioconda # 2.8.1 
-	# conda install humann2 # 0.11.1
-	# 2019/09/19更新 # 2.8.1 https://anaconda.org/bioconda/humann2
-  # humann2-2.8.1        | 61.0 MB
-  # samtools-1.9         | 299 KB 
-  # bcftools-1.9         | 813 KB 
-  # metaphlan2-2.6.0     | 46 KB  
-  # biom-format-2.1.7    | 10.6 MB
-  # bowtie2-2.3.4.3      | 13.7 MB
-  # diamond-0.8.36       | 497 KB 
-
-
+	conda activate humann2
 	# 测试流程是否可用
 	humann2_test # Ran 185 tests in 146.291s OK
 	# 数据库布置见附录：HUMAnN2
 
 	# metaphlan2输助脚本
-	conda install graphlan
 	conda install export2graphlan
+	conda install graphlan
 	# ImportError: libgfortran.so.1错误解决办法
 	conda install libgfortran==1
 

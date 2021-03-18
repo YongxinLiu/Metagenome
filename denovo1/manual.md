@@ -1,176 +1,227 @@
-	# 宏基因组分析流程第一版 —— 输助脚本
-	# Metagenome pipeline version 1 —— Assistant script
-	
+	# 宏基因组分析流程第一版 —— 操作脚本
+	# Metagenome pipeline version 1 —— Manual script
+
+	# Biocloud中重置环境变量(可选)
+	PATH=/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+	# 调置Perl模块
+	PERL5LIB=/conda/envs/kraken2/lib/site_perl/5.26.2/x86_64-linux-thread-multi:/conda/envs/kraken2/lib/site_perl/5.26.2:/conda/envs/kraken2/lib/5.26.2/x86_64-linux-thread-multi:~/miniconda2/envs/kraken2/lib/5.26.2
+
 	# 加载目标环境变量
 	source /conda/bin/activate
 	# 启动宏基因组通用分析环境
-  conda activate meta
-
+	conda activate meta
 
 # 1. 有参分析流程 Reference-based pipeline
-
 
 	# 0. 准备工作 Preparation
 
 	# 设置工作目录 Set work directory
-	# ath/2.5T ath/3T rice/miniCore rice/miniCore2 medicago/metaLyr4
-	wd=medicago/metaLyr4
+	wd=medicago/lyr4/
+	mkdir -p ~/${wd}
 	cd ~/$wd
 	
 	# 准备流程 Prepare makefile
 	ln -s /home/meta/soft/Metagenome/denovo1/parameter.md makefile
-	ln -s /home/meta/soft/Metagenome/denovo1/manual.md manual.sh
+	cp /home/meta/soft/Metagenome/denovo1/manual.md manual.sh
 	
 	# 建立初始工作目录 Create initial working directory
-	make 10init
+	# 代码预览、执行、保存
+	make -n -B init
+	make init
+	echo "#" `date` > result/pipeline.sh
+	make -n -B init >> result/pipeline.sh
 
 	# 准备原始数据 sequencing raw data (多样本合并和统计见附录1)
 	# 链接数据至工作目录
 	ln -s /mnt/m2/data/meta/$wd/*.gz seq/
 
 	# 准备实验设计上传到result目录，至少有两列样本名和组名 Experiment design
-	# 方法1. 数据来源处复制实验设计(推荐)
+	# 方法1. 数据来源处复制实验设计
 	cp /mnt/m2/data/meta/$wd/metadata.txt result/metadata.txt
 	# 方法2. 复制实验设计模板并手动填写
-	# cp /home/meta/soft/Metagenome/denovo1/result/design.txt result/metadata.txt
+	cp /home/meta/soft/Metagenome/denovo1/result/design.txt result/metadata.txt
 	# 方法3. 从样本名中提取，并手动补充
-	# ls seq/*_1.fq.gz|cut -f 2 -d '/'|cut -f 1 -d '_'|awk '{print $1"\t"$1}'|sed '1 i SampleID\tGroupID' > result/metadata.txt
+	ls seq/*_1.fq.gz|cut -f 2 -d '/'|cut -f 1 -d '_'|awk '{print $1"\t"$1}'|sed '1 i SampleID\tGroupID' > result/metadata.txt
 
+	# 检查实验设计ID唯一性，有结果则为重复
+	cut -f1 result/metadata.txt|sort|uniq -d
 
 ## 1.1. 质控并移除宿主 Quality control & Remove host
 
-	### 1.1.1 质量评估原始数据(可选)
-	# 一般此步在原始数据多样本合并后统计，分析之前
-	time make 11qa
+	### 1.1.1 (可选)质量评估原始数据
+	# 依赖软件版本：质量评估、评估报告汇总
+	fastqc -v # v0.11.9
+	multiqc --version # 1.8
+	# 预览代码
+	make -n -B qa
+	# 计算：240G,72p,30m
+	time make qa
+	# 查看result/multiqc_report.html，重点检查数据量分布，重复率，接头含量
 
 	### 1.1.2 KneadData移除低质量和宿主
-	time make 11qc
+	echo -e "\n#" `date` >> result/pipeline.sh
+	# 依赖软件版本：并行、移除低质量和宿主
+	echo -n "kneaddata --version # " >> result/pipeline.sh
+	kneaddata --version >> result/pipeline.sh 2>&1
+	# 预览代码
+	make -n -B qc
+	# 计算：150G,24p,20h; 240G,72p,12h; ; 126G,24x3p,2.5h,99G; 异常中断处理见附录2. KneadData中断
+	time make qc
 	# 结果见 result/11kneaddata_stat.txt 高质量、非宿主比例
-	# 时间较长，几小时到几天(~2d)，如异常中断的处理，见附录2. KneadData中断的手动继续
-	# 苜蓿150G数据，20h
+	# 保存运行代码
+	make -n -B qc >> result/pipeline.sh
 
 	### 1.1.3 提取上传的Clean数据
-	# 按GSA标准整理上传数据，见submit目录
-	make 11gsa
+	# 预览代码
+	make -n -B qa2
+	# 	# 240G,72p,1h，按GSA标准整理上传数据，见submit目录
+	make qa2
+	make -n -B qa2 >> result/pipeline.sh
 
+	### 1.1.4 kraken2质控
+	conda activate kraken2 # bicloud
+	kraken2 --version # 2.1.1
+	# 采用kraken完整数据库注释, 370G,24p,10h; 330G,24x3p,1h;
+	make -n -B kraken2_qc
+	make kraken2_qc
+	make -n -B qa2 >> result/pipeline.sh
 
 ## 1.2. 物种和功能组成定量 humman2
 
 	## 1.2.1 humman2输入文件准备：双端文件cat连接
-	make 12humann2_concat
-  
-  # 启动humann2环境
-  conda activate metaRef
-  # 检查数据库位置
+	make humann2_concat
+
+	# 启动humann2环境
+	conda activate humann2
+	humann2 --version # v2.8.1
+
+	# 检查数据库位置
 	humann2_config --print
+	
 	## 1.2.2 humman2计算，包括metaphlan2
-	make 12humann2
+	make humann2
 	# 4.7 Tb水稻数据，8X12线程运行2.5 Days
+	#  X Tb Data, 3 x 24，运行 xx
 
 	## 1.2.3 功能组成整理 humman2_sum
-	make 12humann2_sum
+	make humann2_sum
 	# 结果见 result/12humann2目录，有功能通路及物种组成表uniref.tsv、标准化表uniref_relab.tsv，以及拆分功能表unstratified和功能物种对应表stratified
 	
 	# humann2转为KEGG
-  humann2_regroup_table -i temp/humann2/genefamilies.tsv \
-    -g uniref90_ko -o temp/humann2/ko.tsv
+	humann2_regroup_table -i temp/humann2/genefamilies.tsv \
+	  -g uniref90_ko -o temp/humann2/ko.tsv
 
 ## 1.3. 整理物种组成表和基本绘图 Summary metaphlan2 and plot
 
 	# 结果见result/13metaphlan2目录
 
 	### 1.3.1 整理物种组成表 Summary metaphlan2
-	make 13metaphaln2_sum
+	make metaphaln2_sum
 	# 结果taxonomy*文件，有多级物种表.tsv、株水平表.spf用于STAMP分析，以及聚类热图_heatmap_top.pdf观察分组情况
 
 	### 1.3.2 GraPhlAn图
-	make 13metaphaln2_graphlan
+	make metaphaln2_graphlan
 	# 结果taxonomy_graphlan*.pdf，包括主图、图例和注释文本3个文件
 
 	### 1.3.3 物种组成LEfSe差异分析(可选)
 	# 依赖实验设计，分组比较末确定时，可选跳过此步
-	make 13metaphaln2_lefse
+	make metaphaln2_lefse
 
 
-## 1.4. kraken2物种组成(可选 10m)
+## 1.4. kraken2物种组成
 
 	### 1.4.1 基于NCBI完整基因组数据库的k-mer物种注释
 	# Taxonomy assign by k-mer and based on NCBI database
-	make 14kraken2_reads
+	kraken2 --version # Kraken version 2.0.9-beta
+	make -n -B kraken2_read
+	# 500G,3x24p,3h; 100G,3x24p,11m
+	make kraken2_read
+	# record pipeline
+	echo -e "\n#" `date` >> result/pipeline.sh
+	make -n -B kraken2_read >> result/pipeline.sh
 
 	### 1.4.2 合并为矩阵 merge into matrix
-	make 14kraken2_reads_sum
+	make kraken2_read_sum
 
 
 
 # 2. 无参分析流程 De novo assemble pipeline
 
 
-## 2.1. khmer质控(可选)
+## 2.1. Assemble 组装
 
-	# 时间过长(1.5d)，不建议使用
-	# make khmer
-
-
-## 2.2. Assemble 组装
-
-  # 启动组装环境
-  conda activate meta
-  megahit -v # MEGAHIT v1.2.9
-
+	# 启动组装环境
+	conda activate meta
+	megahit -v # v1.2.9
 
 	# 方法1. 大项目推荐
-	### 2.2.0 基于qc质控序列单样本拼接(大项目)
-	make 22assemble_single
+	### 2.2.1 基于qc质控序列单样本拼接(大项目)
+	make assemble_single
 	# 66个样168G压缩数据分别装为5h 计算过程日志见 temp/22megahit/megahit.log
 
-	# 方法2. 太慢不推荐
-	### 2.2.1 基于khmer质控后序列拼接(可选, 32p, 0.8d/18.9h)
-	# khmer提高速度，但拼接速度只提高了50%
-	# make megahit_all_k
+	# 方法2. 小项目推荐
+	### 2.2.2 基于qc质控后序列拼接
+	# metahit拼接所有样本, 496G,72p,3d; 38G,48p,16h; 360G,72p,58h; 297G,72p,8h; 142G,48p,7d；1.5d,243G
+	make -n -B megahit_all
+	make megahit_all
+	echo -e "\n#" `date` >> result/pipeline.sh
+	make -n -B megahit_all >> result/pipeline.sh
 
-	# 方法3. 小项目推荐
-	### 2.2.2 基于qc质控后序列拼接 (32p, 1.2d)
-	make 22megahit_all
+	# 问题. 数据量大无法拼接
+	# 126 - Too many vertices in the unitig graph (8403694648 >= 4294967294), you may increase the kmer size to remove tons
+	# 需要增加k-mer，如21增加为29
 
-  # 报错，单样本测式
- time megahit -t 48 \
-        -1 submit/lyr4B3R3_1.fq.gz \
-        -2 submit/lyr4B3R3_2.fq.gz \
-        -o temp/22megahit_all_test --continue
-        
 	### 2.2.3 megahit_all_quast评估
-	# 15m，3GB
-	make 22megahit_all_quast
+	# 3G,15m; 2G,7m
+	make -n -B megahit_all_quast
+	make megahit_all_quast
 
-	### 2.2.4 Contig定量salmon
-	make 22megahit_all_salmon
-
-	### 2.2.5 Contig物种注释 kraken2 (可选，9p, 2m26s)
-	make 22kraken2_contig
-
+	### 2.2.5 (可选)kraken2对contig物种注释
+	# 10M,9G,48m; 2G,
+	conda activate kraken2
+	make -n -B kraken2_contig
+	make kraken2_contig
+	conda deactivate
+	echo -e "\n#" `date` >> result/pipeline.sh
+	make -n -B kraken2_contig >> result/pipeline.sh
 
 ## 2.3. Genome annotation 基因组注释
 
 	### 2.3.1 对单样品组装的每个contig文件基因注释(大数据可选)
-
-	# make 23prodigal_all
+	make prodigal_single
 
 	### 2.3.2 对合并组装的单个contig文件基因注释(小样本可选)
-	# 3G，10h
-	make 23prodigal_all
-
+	# 3G,10h; 9G,20h；2G,
+	prodigal -v # V2.6.3: February, 2016
+	make -n -B prodigal_all
+	make prodigal_all
+	
+	# 并行处理，加速基因预测
+	make -n -B prodigal_all_split
+	# 2.5h,473M
+	make prodigal_all_split
+	echo -e "\n#" `date` >> result/pipeline.sh
+	make -n -B prodigal_all_split >> result/pipeline.sh
 
 	### 2.3.3 构建非冗余基集 Non-redundancy gene set(大数据可选)
 
 	# 90%覆盖度，95%相似度下，拼接结果再聚类基本不变少，如7736减少为7729
-	# 5,514,236聚类为4,879,276；72线程155m，8756m
-	make NRgeneSet
-
+	# 5,514,236聚类为4,879,276，72线程155m，8756m；
+	# 15,889,664聚类为13,924,854，48线程1651m(1d)，71427m；
+	cd-hit-est -v # 4.8.1 (built on Oct 26 2019)
+	make -n -B NRgene
+	make NRgene
+	echo -e "\n#" `date` >> result/pipeline.sh
+	make -n -B NRgene >> result/pipeline.sh
 
 	### 2.3.4 基因定量 salmon genes
-
+	conda activate metawrap1.3 # 中salmon仅为0.13.1
+	salmon -v # 1.3.0
+	# 14M，
+	make -n -B salmon_gene
 	make salmon_gene
+	echo -e "\n#" `date` >> result/pipeline.sh
+	make -n -B salmon_gene >> result/pipeline.sh
 
 	### 2.3.5 基因物种注释 kraken2 annotate gene
 
@@ -179,25 +230,61 @@
 
 ## 2.4 功能数据库注释
 
-### 2.4.1 KEGG
+### 2.4.2 eggNOG
+	# biocloud上: conda activate biobakery
+	emapper.py --version # 2.0.1
+	diamond --version # 2.0.6
+	# 预览代码
+	make -n -B eggnog
+	# eggnog注释
+	# 15M 72p, 6h
+	# The host system is detected to have 1082 GB of RAM. It is recommended to use this parameter for better performance: -c1
+	# 默认diamond比对，采用：--more-sensitive  -e 0.001 --top 3 --query-cover 0 --subject-cover 0
+	make eggnog
+	echo -e "\n#" `date` >> result/pipeline.sh
+	make -n -B eggnog >> result/pipeline.sh
 
-# 比对kegg v76数据库
-make kegg
-# 汇总为result/24kegg/kotab.count/tpm两个表，分别为原始count和rpm
-make kegg_sum
+	# 9m，26G
+	make -n -B eggnog_sum
+	make eggnog_sum
+	# 注释基因数量 3781759/4879276=77.5; 9036098/13,924,854=64.9; 3025768/3886015=77.8; 7189141/9729931=73.9
+	# 注释KO基因数量 2335006/4879276=47.8; 5836548/13,924,854=41.9; 1955582/3886015=50.3; 4545144/9729931=46.7
+	# 合并，15Mx76,75m; 4Mx25,3m; 7Mx25,11m
+	echo -e "\n#" `date` >> result/pipeline.sh
+	make -n -B eggnog_sum >> result/pipeline.sh
 
+### 2.4.2 KEGG
+
+	# 比对kegg 2020 数据库
+	make kegg
+	# 汇总为result/24kegg/kotab.count/tpm两个表，分别为原始count和rpm
+	make kegg_sum
+
+### 2.4.3 CAZy
+
+	# blast比对到CAZy
+	make -n -B dbcan2
+	make -n -B dbcan2_sum
+
+### 2.4.4 CARD
+	
+	# 启动rgi环境
+	conda activate rgi
+	
+	make -n -B card
 
 # 3 分箱
 
-    conda activate metawrap-env
-    metawrap -v # 1.2.1
-    megahit -v # v1.1.3
-    metaspades.py -v # v3.13.0
-    
+	conda activate metawrap1.3
+	metawrap -v # 1.3.2
+	megahit -v # v1.1.3
+	metaspades.py -v # v3.13.0
+
 ## 3.1 混合分箱
 
+## 3.2 分批次分箱
 
-## 3.2 单样本分箱
+## 3.3 单样本分箱
 
   # 样本名
   i=R108B3R9
@@ -1094,34 +1181,6 @@ conda create -n metawrap python=2.7
 source activate metawrap
 conda install -c ursky metawrap-mg 
 
-# 附录2. sourmash基于k-mer算法比较样品间reads、contigs等 (可选)
-
-cd ~/3meta_denovo
-mkdir -p sourmash
-
-# 统计clean data中的Kmer
-for i in `tail -n+2 doc/design.txt|cut -f 1`; do
-# i=SRR1976948
-time sourmash compute -k51 --scaled 10000 seq/${i}.trim.fq -o sourmash/${i}.reads.scaled10k.k51.sig &
-done
-
-# 计算contig中的Kmer
-sourmash compute -k51 --scaled 10000 megahit/final.contigs.fa \
-  -o sourmash/megahit.scaled10k.k51.sig &
-sourmash compute -k51 --scaled 10000 metaspades/scaffolds.fasta \
-  -o sourmash/metaspades.scaled10k.k51.sig &
-
-# 指纹比较：样本vs拼接结果，评估污染比例，以SRR1976948为例
-i=SRR1976948
-sourmash search sourmash/${i}.reads.scaled10k.k51.sig sourmash/megahit.scaled10k.k51.sig --containment 
-sourmash search sourmash/${i}.reads.scaled10k.k51.sig sourmash/metaspades.scaled10k.k51.sig --containment
-# 在拼接结果中找到了58.5%，70.3%
-
-# 比较所有signature文件，计算相似矩阵
-sourmash compare sourmash/*sig -o sourmash/Hu_meta
-# 比较结果绘图
-sourmash plot --labels sourmash/Hu_meta
-# 树图和热图见当前文件夹，从K-mer角度为样本比较、筛选提供可能
 
 
 ## 附录
@@ -1167,3 +1226,78 @@ time parallel --xapply -j 8 \
 	# zlib.error: Error -3 while decompressing: invalid distance too far back
 	# fastq文件可能传输中出错，重复找测序公司重传；这些数据一般用fastqc评估也无法通过
 
+### 检查双端配对
+	
+	# med中25个样本，lyk9开始第二批测序中的15个全有错误
+	for i in `tail -n+2 result/metadata.txt|cut -f1`; do
+	# i=lyk9b3r10
+	echo $i
+	seqkit seq -n -i temp/qc/${i}_1_kneaddata_paired_1.fastq|cut -f 1 -d '/' > temp/header_${i}_1
+	seqkit seq -n -i temp/qc/${i}_1_kneaddata_paired_2.fastq|cut -f 1 -d '/' > temp/header_${i}_2
+	#md5sum temp/header_${i}_1 > temp/md5sum_${i}_1
+	#md5sum temp/header_${i}_2 > temp/md5sum_${i}_2
+	#cat temp/md5sum_${i}* | cut -f 1 -d ' ' | uniq -u
+	cmp temp/header_${i}_1 temp/header_${i}_2 | cut -f 2 -d '_' >> temp/diff.list
+	done
+
+	# 错误的修复，无配对序列
+	i=lyk9b3r10
+	mkdir -p temp/pair/
+	time seqkit pair -1 temp/qc/${i}_1_kneaddata_paired_1.fastq -2 temp/qc/${i}_1_kneaddata_paired_2.fastq -O temp/pair/ -u
+
+	# 检查错误来源，以小样本为例：来源去宿主后即不配对
+	# kraken2_qc过滤后，因为只是head提前，肯定文件本来有问题
+	# 去宿主后，存在ID不一致
+	i=lyk9b3r2
+	seqkit seq -n -i submit/${i}_1.fq.gz|cut -f 1 -d '/' > submit/header_${i}_1
+	seqkit seq -n -i submit/${i}_2.fq.gz|cut -f 1 -d '/' > submit/header_${i}_2
+	ls -l submit/header_${i}_?
+	cmp submit/header_${i}_? | cut -f 2 -d '_' >> submit/diff.list
+	cat submit/diff.list
+	
+	# 去宿主前(ID一致)
+	i=`tail -n+12 result/metadata.txt | head -n 1 | cut -f 1`
+	# 18G,9m,29M；多线程序列一样，时间一样。效果没有明显提交
+	seqkit stat seq/${i}_1.fq.gz
+	memusg -t seqkit seq -n -i -j 10 seq/${i}_1.fq.gz |cut -f 1 -d '/' > seq/header_${i}_1
+	memusg -t seqkit seq -n -i seq/${i}_2.fq.gz|cut -f 1 -d '/' > seq/header_${i}_2
+	ls -l seq/header_${i}_?
+	cmp seq/header_${i}_? | cut -f 2 -d '_' >> seq/diff.list
+	cat seq/diff.list
+
+	# 去宿主后
+	# ID不致
+	memusg -t seqkit seq -n -i temp/11qc/${i}_1_kneaddata_paired_1.fastq|cut -f 1 -d '/' | head > temp/header_${i}_1
+	memusg -t seqkit seq -n -i temp/11qc/${i}_1_kneaddata_paired_2.fastq|cut -f 1 -d '/' | head > temp/header_${i}_2
+	# 但行数一致
+	wc -l temp/11qc/${i}_1_kneaddata_paired_1.fastq temp/11qc/${i}_1_kneaddata_paired_2.fastq
+	
+	# 质控去宿主部分有错，重新运行10个样
+	conda activate meta
+	# 以lyk9b3r1为例测试结果是否成对
+	# 36G,2h,43G; 0.3G,1m,1G
+	i=`tail -n+12 result/metadata.txt | head -n 1 | cut -f 1`
+	zcat seq/${i}_1.fq.gz|head -n 4000000 > seq/${i}_1.fq
+	zcat seq/${i}_2.fq.gz|head -n 4000000 > seq/${i}_2.fq
+	memusg -t parallel --xapply -j 3 \
+	  "kneaddata -i seq/{1}_1.fq -i seq/{1}_2.fq \
+	  -o temp/qc -v -t 48 --remove-intermediate-output \
+	  --trimmomatic /conda/envs/meta/share/trimmomatic/ --trimmomatic-options 'ILLUMINACLIP:/conda/envs/meta/share/trimmomatic/adapters/TruSeq3-PE.fa:2:40:15 SLIDINGWINDOW:4:20 MINLEN:100' \
+	  --reorder -db /db/kneaddata/medicago/bt2" \
+	  ::: `tail -n+12 result/metadata.txt | head -n 1 | cut -f 1`
+	# 去宿主后
+	memusg -t seqkit seq -n -i temp/qc/${i}_1_kneaddata_paired_1.fastq|cut -f 1 -d '/' | head > temp/header_${i}_1
+	memusg -t seqkit seq -n -i temp/qc/${i}_1_kneaddata_paired_2.fastq|cut -f 1 -d '/' | head > temp/header_${i}_2
+	# 行数一致，但序列ID不一致
+	wc -l temp/11qc/${i}_1_kneaddata_paired_1.fastq temp/11qc/${i}_1_kneaddata_paired_2.fastq
+	cmp temp/header_${i}_?
+
+
+	# 依赖软件版本：改名、压缩、链接、md5值计算、
+	parallel --version # 20201122
+	csvtk version # v0.22.0
+	rename --version # 0.20
+	pigz --version # 2.4
+	ln --version # (GNU coreutils) 8.28, 包括Linux常用命令md5sum, cat
+	sed --version # 4.8
+	md5sum --version # 8.28

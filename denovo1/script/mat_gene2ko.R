@@ -40,11 +40,11 @@ if (!suppressWarnings(suppressMessages(require("optparse", character.only = TRUE
 if (TRUE){
   option_list <- list(
     make_option(c("-i", "--input"), type="character", default="temp/24eggnog/gene_anno.count",
-                help="OTU表 [default %default]"),
+                help="OTU [default %default]"),
     make_option(c("-n", "--norm"), type="numeric", default=1000000,
-                help="OTU表 [default %default]"),
+                help="OTU [default %default]"),
     make_option(c("-o", "--output"), type="character", default="result/24eggnog/annotab",
-                help="output directory or prefix; 输出文件前缀 [default %default]")
+                help="output directory or prefix [default %default]")
   )
   opts <- parse_args(OptionParser(option_list=option_list))
   # 显示输入输出确认是否正确

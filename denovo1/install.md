@@ -473,3 +473,9 @@ usearch提供gg13.5, rdpv16和silva123序列和物种注释文件
 		zcat 02seq/bak/${i}_2.fq.gz | head -n 1000000 | gzip > 02seq/${i}_2.fq.gz
 	done
 
+### 三代工具
+
+#### 二三代混装OPERA-MS
+
+	# https://github.com/CSB5/OPERA-MS
+	~/bin
